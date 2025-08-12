@@ -1,0 +1,38 @@
+from fastapi import FastAPI
+from app.db.session import engine
+from app.models import pix_invoice, wallet, transaction  # importa modelos pra criar tabelas
+
+# Rotas
+from app.api.v1.routes import pix
+from app.api.v1.webhooks import psp_pix
+
+# Criar tabelas
+pix_invoice.Base.metadata.create_all(bind=engine)
+wallet.Base.metadata.create_all(bind=engine)
+transaction.Base.metadata.create_all(bind=engine)
+
+# Inicia app
+app = FastAPI(title="Dils Pay Core", version="1.0.0")
+
+# Registra rotas
+app.include_router(pix.router, prefix="/api/v1", tags=["pix"])
+app.include_router(psp_pix.router, prefix="/api/v1", tags=["webhooks"])
+
+@app.get("/")
+def root():
+    return {"status": "Dils Pay API Online"}
+
+
+# --- Extrato: import (tolerante a estrutura) ---
+try:
+    from app.routes.extrato_routes import router as extrato_router
+except Exception:
+    try:
+        from backend.app.routes.extrato_routes import router as extrato_router
+    except Exception as e:
+        extrato_router = None
+        import warnings; warnings.warn(f"NÃO FOI POSSÍVEL IMPORTAR extrato_router: {e}")
+
+
+if 'extrato_router' in globals() and extrato_router is not None:
+    app.include_router(extrato_router, prefix="/api/v1", tags=["Extrato"])

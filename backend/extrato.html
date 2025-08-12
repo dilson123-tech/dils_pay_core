@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Extrato Financeiro — v1 (HTML + JS)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root {
+      --bg: #0b1220; --card:#121a2a; --muted:#8fa1c3; --text:#e7ecf6;
+      --primary:#6ea8fe; --ok:#22c55e; --bad:#ef4444; --border:#22304d;
+      --chip:#0e243f; --shadow: 0 10px 30px rgba(0,0,0,0.25);
+      --radius: 16px;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;background:linear-gradient(180deg,#0b1220,#0b1426 40%,#0b1220 100%);color:var(--text);font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto}
+    .container{max-width:1100px;margin:28px auto;padding:0 16px}
+    .title{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+    .title h1{font-size:20px;margin:0}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow)}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .controls{padding:16px}
+    .controls .row > *{flex:1 1 180px}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+    input,select,button{width:100%;padding:10px 12px;border-radius:12px;border:1px solid var(--border);background:#0b1528;color:var(--text);outline:none}
+    input::placeholder{color:#6b7da4}
+    button{background:var(--primary);border:1px solid #2a4b9c;cursor:pointer;font-weight:600}
+    button.secondary{background:#0e243f;border-color:var(--border)}
+    button.ghost{background:transparent;border-color:var(--border)}
+    .config{padding:16px;border-bottom:1px dashed var(--border);display:grid;grid-template-columns:1fr 1fr auto;gap:12px}
+    .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:var(--chip);border:1px solid var(--border);color:var(--muted);font-size:12px}
+    .badges{display:flex;gap:8px;flex-wrap:wrap}
+    .badge{display:inline-block;padding:4px 10px;border-radius:999px;font-weight:700;font-size:12px}
+    .badge.ok{background:rgba(34,197,94,.15);border:1px solid rgba(34,197,94,.35);color:#8ff0a7}
+    .badge.bad{background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.35);color:#ffb4b4}
+    .table-wrap{overflow:auto;border-top:1px solid var(--border)}
+    table{width:100%;border-collapse:collapse}
+    th,td{padding:12px;border-bottom:1px solid var(--border);white-space:nowrap}
+    th{position:sticky;top:0;background:#0e1629;text-align:left;color:#a9b6d3;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+    .right{text-align:right}
+    .mono{font-variant-numeric:tabular-nums}
+    .muted{color:var(--muted)}
+    .footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px;border-top:1px solid var(--border)}
+    .totals{display:flex;gap:10px;flex-wrap:wrap}
+    .skeleton{opacity:.6;filter:saturate(.2)}
+    .hint{font-size:12px;color:var(--muted)}
+    .btns{display:flex;gap:8px;flex-wrap:wrap}
+    .danger{color:#ff9f9f}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="title">
+      <span class="pill">Extrato • v1</span>
+      <h1>SaaS-like, rápido e sem build</h1>
+    </div>
+
+    <div class="card" id="app">
+      <!-- Config rápida -->
+      <div class="config">
+        <div>
+          <label>BASE_URL</label>
+          <input id="baseUrl" placeholder="ex.: http://127.0.0.1:8000" />
+        </div>
+        <div>
+          <label>Token (Bearer)</label>
+          <input id="token" placeholder="Cole o token aqui" />
+        </div>
+        <div style="align-self:end;display:flex;gap:8px">
+          <button id="saveCfg">Salvar Config</button>
+          <button class="ghost" id="clearCfg" title="Limpar config">Limpar</button>
+        </div>
+      </div>
+
+      <!-- Filtros -->
+      <div class="controls">
+        <div class="row">
+          <div>
+            <label>Data inicial</label>
+            <input type="date" id="dataIni" />
+          </div>
+          <div>
+            <label>Data final</label>
+            <input type="date" id="dataFim" />
+          </div>
+          <div>
+            <label>Tipo</label>
+            <select id="tipo">
+              <option value="">Todos</option>
+              <option value="CREDITO">Crédito</option>
+              <option value="DEBITO">Débito</option>
+            </select>
+          </div>
+          <div>
+            <label>Itens por página</label>
+            <select id="pageSize">
+              <option>5</option><option selected>10</option><option>20</option><option>50</option>
+            </select>
+          </div>
+          <div style="align-self:end;display:flex;gap:8px;width:100%">
+            <button id="aplicar">Aplicar filtros</button>
+            <button class="secondary" id="limpar">Limpar</button>
+            <div class="badges" id="statusBadges" style="margin-left:auto"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tabela -->
+      <div class="table-wrap">
+        <table id="tabela">
+          <thead>
+            <tr>
+              <th>ID</th>
+              <th>Data/Hora</th>
+              <th>Tipo</th>
+              <th class="right">Valor (R$)</th>
+              <th>Descrição</th>
+            </tr>
+          </thead>
+          <tbody id="tbody">
+            <!-- rows -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- Rodapé: paginação + totalizadores -->
+      <div class="footer">
+        <div class="btns">
+          <button class="secondary" id="prev">&larr; Anterior</button>
+          <span class="pill" id="pageInfo">Pág. 1 de 1</span>
+          <button class="secondary" id="next">Próxima &rarr;</button>
+          <button id="baixarCSV">Baixar CSV</button>
+        </div>
+        <div class="totals">
+          <span class="badge ok" id="tCred">Crédito: R$ 0,00</span>
+          <span class="badge bad" id="tDeb">Débito: R$ 0,00</span>
+          <span class="badge" style="background:#11253f;border:1px solid #2a4365;color:#d7e3ff" id="tSaldo">Saldo: R$ 0,00</span>
+        </div>
+      </div>
+
+      <div style="padding:12px;border-top:1px dashed var(--border)" class="hint">
+        Dica: os totalizadores usam <code>X-Total-*</code> do backend, se existirem. Sem esses headers, a página calcula os totais <strong>da página atual</strong>.
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ====== CONFIGURÁVEIS (mude aqui se seu backend usa nomes diferentes) ======
+    const QS_KEYS = { page: 'page', pageSize: 'page_size', start: 'start', end: 'end', tipo: 'tipo' };
+    const CSV_PARAM = 'format';     // se seu backend usa 'export=csv', troque aqui
+    const CSV_VALUE = 'csv';
+    const EXTRATO_PATH = '/api/v1/extrato'; // rota base
+    // ==========================================================================
+
+    const $ = (id) => document.getElementById(id);
+    const state = {
+      baseUrl: '',
+      token: '',
+      page: 1,
+      pageSize: 10,
+      start: '',
+      end: '',
+      tipo: ''
+    };
+
+    // Persistência leve
+    function loadCfg() {
+      state.baseUrl = localStorage.getItem('extrato_baseUrl') || '';
+      state.token   = localStorage.getItem('extrato_token') || '';
+      $('baseUrl').value = state.baseUrl;
+      $('token').value   = state.token;
+    }
+    function saveCfg() {
+      state.baseUrl = $('baseUrl').value.trim();
+      state.token   = $('token').value.trim();
+      localStorage.setItem('extrato_baseUrl', state.baseUrl);
+      localStorage.setItem('extrato_token', state.token);
+      toast('Config salva.');
+    }
+    function clearCfg() {
+      localStorage.removeItem('extrato_baseUrl');
+      localStorage.removeItem('extrato_token');
+      $('baseUrl').value = '';
+      $('token').value = '';
+      state.baseUrl = ''; state.token='';
+      toast('Config limpa.');
+    }
+
+    function toast(msg){
+      const el = document.createElement('div');
+      el.textContent = msg;
+      el.style.position='fixed'; el.style.right='16px'; el.style.bottom='16px';
+      el.style.background='#0e243f'; el.style.border='1px solid #22304d'; el.style.padding='10px 14px';
+      el.style.borderRadius='12px'; el.style.color='#e7ecf6'; el.style.boxShadow='var(--shadow)';
+      document.body.appendChild(el);
+      setTimeout(()=> el.remove(), 1600);
+    }
+
+    // Helpers
+    const fmtBRL = (v) => Number(v).toLocaleString('pt-BR', { style:'currency', currency:'BRL' });
+    const fmtDT  = (iso) => {
+      try { return new Date(iso).toLocaleString('pt-BR'); } catch { return iso ?? ''; }
+    };
+
+    function buildQuery(params){
+      const p = new URLSearchParams();
+      if (state.page)     p.set(QS_KEYS.page, state.page);
+      if (state.pageSize) p.set(QS_KEYS.pageSize, state.pageSize);
+      if (state.start)    p.set(QS_KEYS.start, state.start);
+      if (state.end)      p.set(QS_KEYS.end, state.end);
+      if (state.tipo)     p.set(QS_KEYS.tipo, state.tipo);
+      for (const [k,v] of Object.entries(params||{})) p.set(k, v);
+      return p.toString();
+    }
+
+    async function fetchExtrato(){
+      if(!state.baseUrl || !state.token){
+        toast('Defina BASE_URL e Token.');
+        return { data: [], headers: new Headers() };
+      }
+      const url = state.baseUrl.replace(/\/+$/,'') + EXTRATO_PATH + '?' + buildQuery();
+      const headers = { 'Authorization': 'Bearer ' + state.token, 'Accept':'application/json' };
+      $('tbody').innerHTML = `<tr class="skeleton"><td colspan="5">Carregando...</td></tr>`;
+      try {
+        const res = await fetch(url, { headers });
+        const h = new Headers(res.headers); // clone
+        if(!res.ok){
+          const text = await res.text().catch(()=> '');
+          throw new Error(`HTTP ${res.status} — ${text || 'Falha ao buscar extrato'}`);
+        }
+        const json = await res.json();
+        return { data: Array.isArray(json) ? json : (json.items || []), headers: h };
+      } catch (err){
+        $('tbody').innerHTML = `<tr><td colspan="5" class="danger">Erro: ${err.message}</td></tr>`;
+        return { data: [], headers: new Headers() };
+      }
+    }
+
+    function headersToLower(headers){
+      const obj = {};
+      for (const [k,v] of headers.entries()) obj[k.toLowerCase()] = v;
+      return obj;
+    }
+
+    function renderBadges(total, page, pages){
+      const b = $('statusBadges'); b.innerHTML='';
+      const span = (txt)=>{ const s=document.createElement('span'); s.className='pill'; s.textContent=txt; return s; };
+      b.appendChild(span(`Total: ${total || 0}`));
+      b.appendChild(span(`Página: ${page} / ${pages || 1}`));
+      b.appendChild(span(`PageSize: ${state.pageSize}`));
+      if(state.tipo) b.appendChild(span(`Filtro: ${state.tipo}`));
+      if(state.start || state.end) b.appendChild(span(`Período: ${state.start || '∞'} → ${state.end || '∞'}`));
+    }
+
+    function calcTotalsFromPage(rows){
+      let credito = 0, debito = 0;
+      for(const r of rows){
+        const tipo = String(r.tipo || '').toUpperCase();
+        const valor = Number(r.valor || 0);
+        if(tipo === 'CREDITO') credito += valor;
+        else if(tipo === 'DEBITO') debito += valor;
+      }
+      return { credito, debito, saldo: credito - debito };
+    }
+
+    function setTotals({credito, debito, saldo}, suffix=''){
+      $('tCred').textContent = `Crédito: ${fmtBRL(credito)}${suffix}`;
+      $('tDeb').textContent  = `Débito: ${fmtBRL(debito)}${suffix}`;
+      $('tSaldo').textContent= `Saldo: ${fmtBRL(saldo)}${suffix}`;
+    }
+
+    function renderTable(rows){
+      const tbody = $('tbody'); tbody.innerHTML='';
+      if(!rows.length){
+        tbody.innerHTML = `<tr><td colspan="5" class="muted">Nenhum lançamento encontrado.</td></tr>`;
+        return;
+      }
+      for(const r of rows){
+        const tr = document.createElement('tr');
+        const tipo = String(r.tipo || '').toUpperCase();
+        const badge = `<span class="badge ${tipo==='CREDITO'?'ok':'bad'}">${tipo||'-'}</span>`;
+        tr.innerHTML = `
+          <td class="mono">${r.id ?? '-'}</td>
+          <td class="mono">${fmtDT(r.data || r.created_at || r.timestamp)}</td>
+          <td>${badge}</td>
+          <td class="right mono">${fmtBRL(r.valor ?? r.amount ?? 0)}</td>
+          <td class="muted">${r.descricao ?? r.descr ?? r.memo ?? ''}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    async function loadPage(){
+      const { data, headers } = await fetchExtrato();
+      renderTable(data);
+
+      // Headers para paginação/totalizadores
+      const h = headersToLower(headers);
+      const total = parseInt(h['x-total'] || h['x-total-count'] || '0', 10) || 0;
+      const pageHeader = parseInt(h['x-page'] || state.page, 10) || state.page;
+      const pageSizeHeader = parseInt(h['x-page-size'] || state.pageSize, 10) || state.pageSize;
+      const totalPages = parseInt(h['x-total-pages'] || '0', 10) || (total && pageSizeHeader ? Math.ceil(total / pageSizeHeader) : 1);
+
+      // Totalizadores globais via headers (fallback: da página)
+      const hdrCred = h['x-total-credito'], hdrDeb = h['x-total-debito'], hdrSaldo = h['x-total-saldo'];
+      if (hdrCred || hdrDeb || hdrSaldo){
+        setTotals({
+          credito: Number(hdrCred || 0),
+          debito:  Number(hdrDeb || 0),
+          saldo:   Number(hdrSaldo || (Number(hdrCred||0) - Number(hdrDeb||0)))
+        }, '');
+      } else {
+        const pageTotals = calcTotalsFromPage(data);
+        setTotals(pageTotals, ' (página)');
+      }
+
+      $('pageInfo').textContent = `Pág. ${pageHeader} de ${totalPages}`;
+      renderBadges(total, pageHeader, totalPages);
+
+      // Habilita/desabilita botões
+      $('prev').disabled = pageHeader <= 1;
+      $('next').disabled = pageHeader >= totalPages;
+    }
+
+    // CSV
+    async function baixarCSV(){
+      if(!state.baseUrl || !state.token){ toast('Defina BASE_URL e Token.'); return; }
+      const url = state.baseUrl.replace(/\/+$/,'') + EXTRATO_PATH + '?' + buildQuery({ [CSV_PARAM]: CSV_VALUE });
+      try {
+        const res = await fetch(url, { headers: { 'Authorization': 'Bearer '+state.token, 'Accept':'text/csv' }});
+        if(!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = `extrato_${new Date().toISOString().slice(0,10)}.csv`;
+        document.body.appendChild(a); a.click(); a.remove();
+        URL.revokeObjectURL(a.href);
+      } catch (e){
+        toast('Falha ao baixar CSV. Ajuste CSV_PARAM/rota se necessário.');
+      }
+    }
+
+    // Eventos UI
+    window.addEventListener('DOMContentLoaded', () => {
+      loadCfg();
+      $('saveCfg').onclick = ()=>{ saveCfg(); loadPage(); };
+      $('clearCfg').onclick = ()=>{ clearCfg(); };
+
+      $('aplicar').onclick = ()=>{
+        state.start = $('dataIni').value || '';
+        state.end   = $('dataFim').value || '';
+        state.tipo  = $('tipo').value || '';
+        state.pageSize = parseInt($('pageSize').value, 10) || 10;
+        state.page = 1;
+        loadPage();
+      };
+      $('limpar').onclick = ()=>{
+        $('dataIni').value = $('dataFim').value = '';
+        $('tipo').value = '';
+        $('pageSize').value = String(state.pageSize = 10);
+        state.start = state.end = state.tipo = '';
+        state.page = 1;
+        loadPage();
+      };
+
+      $('prev').onclick = ()=>{ if(state.page>1){ state.page--; loadPage(); }};
+      $('next').onclick = ()=>{ state.page++; loadPage(); };
+      $('baixarCSV').onclick = baixarCSV;
+
+      // Primeira carga (se já tiver config salva)
+      if(state.baseUrl && state.token) loadPage();
+    });
+  </script>
+</body>
+</html>

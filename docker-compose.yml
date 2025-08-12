@@ -1,0 +1,19 @@
+services:
+  db:
+    image: postgres:16
+    container_name: dils_pay_db
+    environment:
+      POSTGRES_USER: dils
+      POSTGRES_PASSWORD: dils123
+      POSTGRES_DB: dils_pay
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dils -d dils_pay"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  pgdata:

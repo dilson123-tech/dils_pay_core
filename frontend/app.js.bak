@@ -1,0 +1,92 @@
+const QS_KEYS={page:'page',pageSize:'page_size',start:'start',end:'end',tipo:'tipo'};
+const CSV_PARAM='format', CSV_VALUE='csv', EXTRATO_PATH='/api/v1/extrato';
+const $=(id)=>document.getElementById(id);
+const state={baseUrl:'',token:'',page:1,pageSize:10,start:'',end:'',tipo:''};
+
+function loadCfg(){state.baseUrl=localStorage.getItem('extrato_baseUrl')||'';state.token=localStorage.getItem('extrato_token')||'';$('baseUrl').value=state.baseUrl;$('token').value=state.token;}
+function saveCfg(){state.baseUrl=$('baseUrl').value.trim();state.token=$('token').value.trim();localStorage.setItem('extrato_baseUrl',state.baseUrl);localStorage.setItem('extrato_token',state.token);toast('Config salva.');}
+function clearCfg(){localStorage.removeItem('extrato_baseUrl');localStorage.removeItem('extrato_token');$('baseUrl').value='';$('token').value='';state.baseUrl='';state.token='';toast('Config limpa.');}
+function toast(msg){const el=document.createElement('div');el.textContent=msg;Object.assign(el.style,{position:'fixed',right:'16px',bottom:'16px',background:'#0e243f',border:'1px solid #22304d',padding:'10px 14px',borderRadius:'12px',color:'#e7ecf6',boxShadow:'0 10px 30px rgba(0,0,0,.25)'});document.body.appendChild(el);setTimeout(()=>el.remove(),1600);}
+const fmtBRL=(v)=>Number(v).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+const fmtDT=(iso)=>{try{return new Date(iso).toLocaleString('pt-BR')}catch{return iso??''}};
+function buildQuery(extra){const p=new URLSearchParams();if(state.page)p.set(QS_KEYS.page,state.page);if(state.pageSize)p.set(QS_KEYS.pageSize,state.pageSize);if(state.start)p.set(QS_KEYS.start,state.start);if(state.end)p.set(QS_KEYS.end,state.end);if(state.tipo)p.set(QS_KEYS.tipo,state.tipo);for(const [k,v] of Object.entries(extra||{}))p.set(k,v);return p.toString();}
+async function fetchExtrato(){
+  if(!state.baseUrl||!state.token){toast('Defina BASE_URL e Token.');return {data:[],headers:new Headers()}}
+  const url=state.baseUrl.replace(/\/+$/,'')+EXTRATO_PATH+'?'+buildQuery();
+  $('tbody').innerHTML=`<tr class="skeleton"><td colspan="5">Carregando...</td></tr>`;
+  try{
+    const res=await fetch(url,{headers:{'Authorization':'Bearer '+state.token,'Accept':'application/json'}});
+    const h=new Headers(res.headers);
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json=await res.json();
+    return {data:Array.isArray(json)?json:(json.items||[]),headers:h};
+  }catch(e){
+    $('tbody').innerHTML=`<tr><td colspan="5" class="danger">Erro: ${e.message}</td></tr>`;
+    return {data:[],headers:new Headers()};
+  }
+}
+function Hlower(h){const o={};for(const [k,v] of h.entries())o[k.toLowerCase()]=v;return o;}
+function renderBadges(total,page,pages){const b=$('statusBadges');b.innerHTML='';const chip=(t)=>{const s=document.createElement('span');s.className='pill';s.textContent=t;return s;};b.appendChild(chip(`Total: ${total||0}`));b.appendChild(chip(`Página: ${page} / ${pages||1}`));b.appendChild(chip(`PageSize: ${state.pageSize}`));if(state.tipo)b.appendChild(chip(`Filtro: ${state.tipo}`));if(state.start||state.end)b.appendChild(chip(`Período: ${state.start||'∞'} → ${state.end||'∞'}`));}
+function calcTotalsFromPage(rows){let c=0,d=0;for(const r of rows){const t=String(r.tipo||'').toUpperCase();const v=Number(r.valor||0);if(t==='CREDITO')c+=v;else if(t==='DEBITO')d+=v;}return {credito:c,debito:d,saldo:c-d};}
+function setTotals({credito,debito,saldo},sfx=''){$('tCred').textContent=`Crédito: ${fmtBRL(credito)}${sfx}`;$('tDeb').textContent=`Débito: ${fmtBRL(debito)}${sfx}`;$('tSaldo').textContent=`Saldo: ${fmtBRL(saldo)}${sfx}`;}
+function renderTable(rows){
+  const tb=$('tbody');tb.innerHTML='';
+  if(!rows.length){tb.innerHTML=`<tr><td colspan="5" class="muted">Nenhum lançamento encontrado.</td></tr>`;return;}
+  for(const r of rows){
+    const t=String(r.tipo||'').toUpperCase();
+    const badge=`<span class="badge ${t==='CREDITO'?'ok':'bad'}">${t||'-'}</span>`;
+    tb.insertAdjacentHTML('beforeend',`
+      <tr>
+        <td class="mono">${r.id ?? '-'}</td>
+        <td class="mono">${fmtDT(r.data || r.created_at || r.timestamp)}</td>
+        <td>${badge}</td>
+        <td class="right mono">${fmtBRL(r.valor ?? r.amount ?? 0)}</td>
+        <td class="muted">${r.descricao ?? r.descr ?? r.memo ?? ''}</td>
+      </tr>`);
+  }
+}
+async function loadPage(){
+  const {data,headers}=await fetchExtrato();
+  renderTable(data);
+  const h=Hlower(headers);
+  const total=parseInt(h['x-total']||h['x-total-count']||'0',10)||0;
+  const pageHeader=parseInt(h['x-page']||state.page,10)||state.page;
+  const pageSizeHeader=parseInt(h['x-page-size']||state.pageSize,10)||state.pageSize;
+  const totalPages=parseInt(h['x-total-pages']||'0',10)||(total&&pageSizeHeader?Math.ceil(total/pageSizeHeader):1);
+
+  const hdrCred=h['x-total-credito'], hdrDeb=h['x-total-debito'];
+  const hdrSaldo=h['x-total-saldo']||h['x-total-saldo-periodo'];
+  if(hdrCred||hdrDeb||hdrSaldo){
+    setTotals({credito:Number(hdrCred||0),debito:Number(hdrDeb||0),saldo:Number(hdrSaldo || (Number(hdrCred||0)-Number(hdrDeb||0)))});
+  }else{
+    setTotals(calcTotalsFromPage(data),' (página)');
+  }
+
+  $('pageInfo').textContent=`Pág. ${pageHeader} de ${totalPages}`;
+  renderBadges(total,pageHeader,totalPages);
+  $('prev').disabled=pageHeader<=1; $('next').disabled=pageHeader>=totalPages;
+}
+
+async function baixarCSV(){
+  if(!state.baseUrl||!state.token){toast('Defina BASE_URL e Token.');return;}
+  const url=state.baseUrl.replace(/\/+$/,'')+EXTRATO_PATH+'?'+buildQuery({[CSV_PARAM]:CSV_VALUE});
+  try{
+    const res=await fetch(url,{headers:{'Authorization':'Bearer '+state.token,'Accept':'text/csv'}});
+    if(!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob=await res.blob();const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);a.download=`extrato_${new Date().toISOString().slice(0,10)}.csv`;
+    document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(a.href);
+  }catch(e){toast('Falha ao baixar CSV. Ajuste CSV_PARAM/rota se necessário.');}
+}
+
+window.addEventListener('DOMContentLoaded',()=>{
+  loadCfg();
+  $('saveCfg').onclick=()=>{saveCfg();loadPage();};
+  $('clearCfg').onclick=()=>{clearCfg();};
+  $('aplicar').onclick=()=>{state.start=$('dataIni').value||'';state.end=$('dataFim').value||'';state.tipo=$('tipo').value||'';state.pageSize=parseInt($('pageSize').value,10)||10;state.page=1;loadPage();};
+  $('limpar').onclick=()=>{$('dataIni').value=$('dataFim').value='';$('tipo').value='';$('pageSize').value=String(state.pageSize=10);state.start=state.end=state.tipo='';state.page=1;loadPage();};
+  $('prev').onclick=()=>{if(state.page>1){state.page--;loadPage();}};
+  $('next').onclick=()=>{state.page++;loadPage();};
+  $('baixarCSV').onclick=baixarCSV;
+  if(state.baseUrl&&state.token) loadPage();
+});

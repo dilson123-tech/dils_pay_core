@@ -1,0 +1,52 @@
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.db.init_db import init_db
+# Importa os models para o metadata conhecer as tabelas
+from app.models import user, wallet, transaction, pix_invoice, audit_log  # noqa: F401
+from app.api.v1.routes import health, auth, ledger, pix
+from app.api.v1.webhooks import psp_pix
+from app.api.v1.routes import debug
+from app.api.v1.routes import wallet
+
+
+app = FastAPI(title="DilsPay Core", version="0.1.0")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+@app.on_event("startup")
+def on_startup():
+    init_db()
+
+app.include_router(health.router, prefix="/api/v1")
+app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
+app.include_router(ledger.router, prefix="/api/v1", tags=["ledger"])
+app.include_router(pix.router, prefix="/api/v1", tags=["pix"])
+app.include_router(psp_pix.router, prefix="/api/v1", tags=["webhooks"])
+app.include_router(debug.router, prefix="/api/v1", tags=["debug"])
+app.include_router(wallet.router, prefix="/api/v1", tags=["wallet"])
+
+
+@app.get("/")
+def root():
+    return {"ok": True, "name": "DilsPay Core"}
+
+
+# --- Extrato: import (tolerante a estrutura) ---
+try:
+    from app.routes.extrato_routes import router as extrato_router
+except Exception:
+    try:
+        from backend.app.routes.extrato_routes import router as extrato_router
+    except Exception as e:
+        extrato_router = None
+        import warnings; warnings.warn(f"NÃO FOI POSSÍVEL IMPORTAR extrato_router: {e}")
+
+
+if 'extrato_router' in globals() and extrato_router is not None:
+    app.include_router(extrato_router, prefix="/api/v1", tags=["Extrato"])

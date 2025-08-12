@@ -1,0 +1,87 @@
+from datetime import datetime
+from typing import Optional, Literal, List
+
+from fastapi import APIRouter, Response, Depends, Query
+from sqlalchemy.orm import Session
+from sqlalchemy import func, case
+
+# ajuste esses imports conforme seu projeto:
+from app.database.session import get_db
+from app.models.transaction import Transaction  # deve ter: id, user_id, data, tipo, valor, descricao
+
+# reaproveita router já existente, se houver
+try:
+    router  # type: ignore
+except NameError:
+    router = APIRouter(tags=["ledger"])
+
+# --- POST de criação (se você já tinha, mantenha o seu) ---
+# (deixei sem implementação para não sobrescrever o seu POST existente)
+
+# --- GET de listagem (novo) ---
+@router.get("/ledger/{user_id}", response_model=List[dict])
+def list_ledger(
+    user_id: int,
+    response: Response,
+    db: Session = Depends(get_db),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(10, ge=1, le=100),
+    start: Optional[datetime] = Query(None),
+    end: Optional[datetime] = Query(None),
+    tipo: Optional[Literal["CREDITO", "DEBITO"]] = Query(None),
+    format: Optional[str] = Query(None),  # ?format=csv
+):
+    q = db.query(Transaction).filter(Transaction.user_id == user_id)
+    if start: q = q.filter(Transaction.data >= start)
+    if end:   q = q.filter(Transaction.data <= end)
+    if tipo:  q = q.filter(Transaction.tipo == tipo)
+
+    credito_q = db.query(func.coalesce(func.sum(
+        case((Transaction.tipo=="CREDITO", Transaction.valor), else_=0.0)
+    ), 0.0)).filter(Transaction.user_id==user_id)
+    debito_q  = db.query(func.coalesce(func.sum(
+        case((Transaction.tipo=="DEBITO",  Transaction.valor), else_=0.0)
+    ), 0.0)).filter(Transaction.user_id==user_id)
+    if start:
+        credito_q = credito_q.filter(Transaction.data >= start)
+        debito_q  = debito_q.filter(Transaction.data >= start)
+    if end:
+        credito_q = credito_q.filter(Transaction.data <= end)
+        debito_q  = debito_q.filter(Transaction.data <= end)
+
+    total_count = q.count()
+    items = (q.order_by(Transaction.data.desc(), Transaction.id.desc())
+               .offset((page-1)*page_size)
+               .limit(page_size)
+               .all())
+
+    total_cred = float(credito_q.scalar() or 0.0)
+    total_deb  = float(debito_q.scalar() or 0.0)
+    saldo      = total_cred - total_deb
+
+    response.headers["X-Total-Count"] = str(total_count)
+    response.headers["X-Page"] = str(page)
+    response.headers["X-Page-Size"] = str(page_size)
+    response.headers["X-Total-Credito"] = f"{total_cred}"
+    response.headers["X-Total-Debito"] = f"{total_deb}"
+    response.headers["X-Total-Saldo-Periodo"] = f"{saldo}"
+
+    if (format or "").lower() == "csv":
+        import csv, io
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow(["id","data","tipo","valor","descricao"])
+        for t in items:
+            w.writerow([t.id, t.data.isoformat() if getattr(t, "data", None) else "",
+                        t.tipo, float(t.valor or 0.0), t.descricao or ""])
+        return Response(content=buf.getvalue().encode("utf-8"), media_type="text/csv")
+
+    def to_dict(t):
+        return {
+            "id": t.id,
+            "data": t.data.isoformat() if getattr(t, "data", None) else None,
+            "tipo": t.tipo,
+            "valor": float(t.valor or 0.0),
+            "descricao": t.descricao,
+        }
+    return [to_dict(t) for t in items]

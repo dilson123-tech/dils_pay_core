@@ -1,9 +1,26 @@
+# Python / venv
 venv/
-__pycache__/
+**/__pycache__/
 *.pyc
+*.pyo
+
+# Env / segredos
 .env
+*.env
 .env.*
-*.sqlite3
-.DS_Store
-.idea/
+
+# DB e artefatos locais
+*.db
+dev.db
+
+# Editor / SO
 .vscode/
+.idea/
+.DS_Store
+
+# Frontend (se usar build)
+node_modules/
+dist/
+
+# Outros arquivos locais
+*.log
