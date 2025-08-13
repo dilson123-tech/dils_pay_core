@@ -27,13 +27,19 @@
           <input id="token" placeholder="Cole o token aqui" />
         </div>
         <div>
-          <label>Ledger ID</label>
-          <input id="ledgerId" type="number" min="1" value="1" />
-        </div>
+     <div>
+       <label>Ledger</label>
+       <select id="ledgerSelect"></select>
+       <small style="display:block;opacity:.7">ou digite:</small>
+       <input id="ledgerId" type="number" min="1" value="1" />
+     </div>
+
         <div class="actions">
           <button id="saveCfg">Salvar Config</button>
           <button class="ghost" id="clearCfg" title="Limpar config">Limpar</button>
-        </div>
+          <button class="ghost" id="reloadLedgers" title="Recarregar lista de ledgers">Atualizar lista</button>
+     
+   </div>
       </div>
 
       <!-- Filtros -->
@@ -117,8 +123,9 @@
     </div><!-- card -->
   </div><!-- container -->
 
-  <script src="./app.js"></script>
+ 
   <!-- força pegar a versão nova do JS -->
-  <script src="extrato.js?v=7"></script>
+  <script src="extrato.js?v=13"></script>
+
 </body>
 </html>

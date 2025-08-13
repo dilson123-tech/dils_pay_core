@@ -1,56 +1,50 @@
-# app/main.py
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-# init_db opcional (não quebra se não existir)
-try:
-    from app.database.init_db import init_db
-except Exception:
-    def init_db():
-        pass
-
-# ✅ cria o app primeiro
 app = FastAPI(title="DilsPay Core", version="0.1.0")
 
-# 🔓 CORS único (sem duplicatas)
+# CORS básico p/ dev local
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*", "null", "http://127.0.0.1:5500", "http://localhost:5500"],
-    allow_credentials=False,
+    allow_origins=["*"],
+    allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*", "Authorization", "Content-Type"],
-    # expõe cabeçalhos para os totalizadores no front
-    expose_headers=[
-        "X-Total", "X-Total-Count", "X-Total-Pages", "X-Page", "X-Page-Size",
-        "X-Total-Credito", "X-Total-Debito", "X-Total-Saldo", "X-Total-Saldo-Periodo",
-    ],
+    allow_headers=["*"],
 )
 
-# 🚀 startup
-@app.on_event("startup")
-def on_startup():
-    try:
-        init_db()
-    except Exception as e:
-        print(f"[startup] init_db falhou: {e}")
+# === Routers ===
+# os obrigatórios:
+from app.api.v1.routes import health, auth, ledger
+from app.api.v1.routes import wallet as wallet_routes  # nosso dropdown
 
-# 🔌 helper para incluir routers com segurança
-def _mount(module_path: str, tag: str):
-    try:
-        mod = __import__(module_path, fromlist=["router"])
-        app.include_router(mod.router, prefix="/api/v1", tags=[tag])
-        print(f"[router] OK -> {module_path}")
-    except Exception as e:
-        print(f"[router] PULANDO {module_path}: {e}")
+# os opcionais: tenta importar, mas não quebra se não existirem
+try:
+    from app.api.v1.routes import pix as pix_routes
+except Exception:
+    pix_routes = None
 
-# 🧭 monte aqui os routers que existirem no seu projeto
-_mount("app.api.v1.routes.health",   "health")
-_mount("app.api.v1.routes.auth",     "auth")      # <- login/register
-_mount("app.api.v1.routes.ledger",   "ledger")
-_mount("app.api.v1.routes.wallet",   "wallet")
-_mount("app.api.v1.routes.pix",      "pix")       # opcional
-_mount("app.api.v1.routes.webhooks", "webhooks")  # opcional
-_mount("app.api.v1.routes.debug",    "debug")     # opcional
+try:
+    from app.api.v1.routes import webhooks
+except Exception:
+    webhooks = None
+
+try:
+    from app.api.v1.routes import debug
+except Exception:
+    debug = None
+
+# monte aqui os routers
+app.include_router(health.router,        prefix="/api/v1", tags=["health"])
+app.include_router(auth.router,          prefix="/api/v1", tags=["auth"])
+app.include_router(ledger.router,        prefix="/api/v1", tags=["ledger"])
+app.include_router(wallet_routes.router, prefix="/api/v1", tags=["wallet"])
+
+if pix_routes:
+    app.include_router(pix_routes.router, prefix="/api/v1", tags=["pix"])
+if webhooks:
+    app.include_router(webhooks.router,   prefix="/api/v1", tags=["webhooks"])
+if debug:
+    app.include_router(debug.router,      prefix="/api/v1", tags=["debug"])
 
 # raiz simples
 @app.get("/")

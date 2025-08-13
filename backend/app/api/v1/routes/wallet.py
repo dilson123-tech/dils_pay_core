@@ -1,13 +1,23 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from app.db.session import get_db
+from app.database.session import get_db
 from app.models.wallet import Wallet
 
 router = APIRouter()
 
-@router.get("/wallets/{user_id}")
-def get_wallet(user_id: int, db: Session = Depends(get_db)):
-    w = db.query(Wallet).filter(Wallet.user_id == user_id).first()
-    if not w:
-        raise HTTPException(404, "Wallet não encontrada")
-    return {"user_id": user_id, "wallet_id": w.id, "saldo": str(w.saldo_atual)}
+@router.get("/wallets")
+def list_wallets(db: Session = Depends(get_db)):
+    rows = (
+        db.query(Wallet.id, Wallet.user_id, Wallet.saldo_atual, Wallet.criado_em)
+          .order_by(Wallet.id.asc())
+          .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "user_id": r.user_id,
+            "saldo": float(r.saldo_atual or 0),
+            "criado_em": r.criado_em.isoformat() if r.criado_em else None,
+        }
+        for r in rows
+    ]

@@ -101,3 +101,63 @@ def get_ledger(
             "descricao": it.referencia or "",
         })
     return saida
+# --- CSV do extrato (download via servidor) ---
+from fastapi import Depends
+from fastapi.responses import StreamingResponse
+from sqlalchemy.orm import Session
+from sqlalchemy import asc, desc
+from datetime import datetime
+import io, csv
+
+from app.database.session import get_db
+from app.models.transaction import Transaction as T
+
+@router.get("/ledger/{wallet_id}/csv")
+def ledger_csv(
+    wallet_id: int,
+    tipo: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    order_by: str = "data",
+    order_dir: str = "desc",
+    db: Session = Depends(get_db),
+):
+    q = db.query(T).filter(T.wallet_id == wallet_id)
+
+    if tipo in ("CREDITO", "DEBITO"):
+        q = q.filter(T.tipo == tipo)
+
+    def parse(s: str | None, fim=False):
+        if not s: return None
+        if len(s) == 10:
+            s = s + (" 23:59:59" if fim else " 00:00:00")
+        try:
+            return datetime.fromisoformat(s)
+        except Exception:
+            return None
+
+    ds, de = parse(start, False), parse(end, True)
+    if ds: q = q.filter(T.criado_em >= ds)
+    if de: q = q.filter(T.criado_em <= de)
+
+    ord_map = {"id": T.id, "data": T.criado_em, "tipo": T.tipo, "valor": T.valor, "descricao": T.referencia}
+    col = ord_map.get(order_by, T.criado_em)
+    q = q.order_by(desc(col) if order_dir.lower() == "desc" else asc(col))
+
+    def gen():
+        buf = io.StringIO()
+        w = csv.writer(buf, delimiter=';', quoting=csv.QUOTE_MINIMAL)
+        w.writerow(["id", "data", "tipo", "valor", "descricao"])
+        yield buf.getvalue(); buf.seek(0); buf.truncate(0)
+        for t in q.yield_per(1000):
+            w.writerow([
+                t.id,
+                t.criado_em.isoformat(sep=" ") if t.criado_em else "",
+                t.tipo or "",
+                f"{float(t.valor or 0):.2f}".replace(".", ","),
+                (t.referencia or "").replace("\n", " ")
+            ])
+            yield buf.getvalue(); buf.seek(0); buf.truncate(0)
+
+    headers = {"Content-Disposition": f'attachment; filename="extrato_wallet_{wallet_id}.csv"'}
+    return StreamingResponse(gen(), media_type="text/csv; charset=utf-8", headers=headers)
