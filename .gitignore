@@ -1,26 +1,29 @@
-# Python / venv
-venv/
-**/__pycache__/
+# Python
+__pycache__/
 *.pyc
 *.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
 
-# Env / segredos
+# Virtualenv
+backend/venv/
 .env
 *.env
-.env.*
 
-# DB e artefatos locais
-*.db
-dev.db
+# DBs / artefatos locais
+backend/dev.db
+*.sqlite
+*.sqlite3
 
-# Editor / SO
+# Editor/OS
 .vscode/
 .idea/
 .DS_Store
 
-# Frontend (se usar build)
-node_modules/
-dist/
-
-# Outros arquivos locais
+# Front/output
+frontend/*.csv
 *.log
+
+# Docker
+*.pid
