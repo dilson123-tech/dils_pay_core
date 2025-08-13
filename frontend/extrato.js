@@ -1,410 +1,347 @@
-console.log("extrato.js carregado");
+// ================= DilsPay — extrato.js (compat HTML) =================
+// Compatível com IDs do seu extrato.html:
+// - pageInfo (fallback: pagInfo)
+// - tCred/tDeb/tSaldo (fallback: totCredito/totDebito/totSaldo)
+// - <th class="sortable" data-key="..."> (fallback: data-field)
+// - <tbody id="tbody"> (fallback: querySelector('#tabela tbody'))
+// =====================================================================
 
-// ---------- Estado ----------
-const SKEY = "extrato_cfg_v1";
-let state = {
+const LS_KEY = "dilspay_extrato_cfg_v1";
+
+const state = {
   baseUrl: "",
   token: "",
+  ledgerId: 1,
+  start: "",
+  end: "",
+  tipo: "",
   page: 1,
   pageSize: 10,
-  tipo: "",        // "", "CREDITO", "DEBITO"
-  dataIni: "",     // "YYYY-MM-DD"
-  dataFim: "",     // "YYYY-MM-DD"
-  ledgerId: 1,     // selecionável na UI
-  sortBy: null,    // 'id' | 'data' | 'tipo' | 'valor' | 'descricao'
-  sortDir: "asc",  // 'asc' | 'desc'
+  sortField: "data",
+  sortDir: "desc",
+  lastPageItems: [],
 };
-let lastPageItems = []; // cache da página atual
 
-// ---------- Utils ----------
 const $ = (id) => document.getElementById(id);
-const fmtBRL = (n) =>
-  (typeof n === "number" ? n : Number(n || 0)).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
-const asStartISO = (d) => (d ? `${d}T00:00:00` : "");
-const asEndISO   = (d) => (d ? `${d}T23:59:59` : "");
+const getEl = {
+  pageInfo: () => $("pageInfo") || $("pagInfo"),
+  tCred: () => $("tCred") || $("totCredito"),
+  tDeb: () => $("tDeb") || $("totDebito"),
+  tSaldo: () => $("tSaldo") || $("totSaldo"),
+  tbody: () => $("tbody") || document.querySelector("#tabela tbody"),
+};
 
-function fmtDateInput(d){
-  const pad = (n)=>String(n).padStart(2,"0");
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
-}
-function setDateRangeDays(days){
-  const end = new Date();
-  const start = new Date();
-  start.setDate(end.getDate() - (days-1));
-  $("dataIni").value = fmtDateInput(start);
-  $("dataFim").value = fmtDateInput(end);
-}
-function setDateMonthCurrent(){
-  const now = new Date();
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end   = new Date(now.getFullYear(), now.getMonth()+1, 0);
-  $("dataIni").value = fmtDateInput(start);
-  $("dataFim").value = fmtDateInput(end);
-}
+const money = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 
-function saveLocal() { localStorage.setItem(SKEY, JSON.stringify(state)); }
 function loadLocal() {
-  try {
-    const raw = localStorage.getItem(SKEY);
-    if (!raw) return;
-    Object.assign(state, JSON.parse(raw));
-  } catch {}
+  try { Object.assign(state, JSON.parse(localStorage.getItem(LS_KEY) || "{}")); } catch {}
+}
+function saveLocal() {
+  localStorage.setItem(LS_KEY, JSON.stringify({
+    baseUrl: state.baseUrl, token: state.token, ledgerId: state.ledgerId,
+    start: state.start, end: state.end, tipo: state.tipo,
+    page: state.page, pageSize: state.pageSize,
+    sortField: state.sortField, sortDir: state.sortDir,
+  }));
 }
 
-function applyStateToUI() {
-  $("baseUrl").value  = state.baseUrl || "";
-  $("token").value    = state.token   || "";
-  $("dataIni").value  = state.dataIni || "";
-  $("dataFim").value  = state.dataFim || "";
-  $("tipo").value     = state.tipo ?? "";
-  $("pageSize").value = String(state.pageSize || 10);
-  if ($("ledgerId")) $("ledgerId").value = String(state.ledgerId || 1);
-  updatePageInfo();
+function setLoading(on = true) {
+  document.body.classList.toggle("loading", !!on);
+  const b = $("aplicar");
+  if (b) { b.disabled = !!on; b.textContent = on ? "Carregando..." : "Aplicar filtros"; }
+  if (on) renderSkeletonRows();     // <- mostra skeleton enquanto carrega
 }
 
-function readUIToState() {
-  state.baseUrl  = ($("baseUrl").value || "").trim().replace(/\/+$/,""); // remove barra final
-  state.token    = $("token").value.trim();
-  state.dataIni  = $("dataIni").value || "";
-  state.dataFim  = $("dataFim").value || "";
-  state.tipo     = $("tipo").value || "";
-  state.pageSize = Number($("pageSize").value || 10);
-  state.ledgerId = Number($("ledgerId")?.value || state.ledgerId || 1);
+
+function showBanner(msg, type="ok"){
+  const el = $("banner"); // pode não existir no seu HTML — então só loga
+  console[type === "error" ? "error" : "log"](msg);
+  if (!el) return;
+  el.className = `banner ${type}`; el.textContent = msg; el.style.display = "block";
+  clearTimeout(showBanner._t); showBanner._t = setTimeout(()=> el.style.display="none", 5000);
 }
 
-// ---------- Sort helpers ----------
-function compareVals(a, b, key){
-  if (key === "valor") return (Number(a?.valor||0) - Number(b?.valor||0));
-  if (key === "id")    return String(a?.id||"").localeCompare(String(b?.id||""), "pt-BR", {numeric:true});
-  if (key === "data") {
-    const da = Date.parse(a?.data || "") || 0;
-    const db = Date.parse(b?.data || "") || 0;
-    return da - db;
-  }
-  const va = (a?.[key] ?? "").toString().toLowerCase();
-  const vb = (b?.[key] ?? "").toString().toLowerCase();
-  return va.localeCompare(vb, "pt-BR", {numeric:true});
-}
-function sortItems(items){
-  if (!state.sortBy) return items;
-  const arr = items.slice();
-  arr.sort((x,y)=>{
-    const nx = normItem(x), ny = normItem(y);
-    const r = compareVals(nx, ny, state.sortBy);
-    return state.sortDir === "asc" ? r : -r;
-  });
-  return arr;
-}
-function markSortedColumn(){
+function renderSortIndicators() {
   document.querySelectorAll("th.sortable").forEach(th=>{
     th.classList.remove("asc","desc","active");
-    if (th.dataset.key === state.sortBy){
-      th.classList.add("active", state.sortDir);
+    const key = th.dataset.key || th.dataset.field;
+    if (key === state.sortField) {
+      th.classList.add("active", state.sortDir === "asc" ? "asc" : "desc");
     }
   });
 }
 
-// ---------- HTTP ----------
-async function apiGET(path, params = {}) {
-  if (!state.baseUrl) throw new Error("BASE_URL vazia");
+function buildURL(){
+  const baseUrl = (state.baseUrl || "").replace(/\/+$/, "");
+  const ledgerId = Number($("ledgerId")?.value) || Number(state.ledgerId) || 1;
 
-  const url = new URL(`${state.baseUrl}${path}`);
-  Object.entries(params).forEach(([k, v]) => (v !== "" && v != null) && url.searchParams.set(k, v));
-
-  const headers = { "Accept": "application/json" };
-  if (state.token) headers.Authorization = `Bearer ${state.token}`;
-
-  const res = await fetch(url.toString(), { headers });
-
-  const totals = {
-    total: Number(res.headers.get("X-Total") || 0),
-    tCred: Number(res.headers.get("X-Total-Credito") || 0),
-    tDeb : Number(res.headers.get("X-Total-Debito")  || 0),
-    tSaldo: Number(res.headers.get("X-Total-Saldo")  || 0),
-  };
-
-  if (!res.ok) {
-    const text = await res.text().catch(()=> "");
-    throw new Error(`HTTP ${res.status} — ${text || res.statusText}`);
-  }
-  const data = await res.json().catch(()=> ({}));
-  return { data, totals };
-}
-
-// ---------- Normalização ----------
-function normItem(it = {}) {
-  return {
-    id:        it.id ?? it.ID ?? it.tx_id ?? it.uuid ?? "",
-    data:      it.data ?? it.created_at ?? it.createdAt ?? it.timestamp ?? "",
-    tipo:      it.tipo ?? it.type ?? it.kind ?? it.direction ?? "",
-    valor:     it.valor ?? it.amount ?? it.value ?? 0,
-    descricao: it.descricao ?? it.description ?? it.memo ?? it.note ?? ""
-  };
-}
-function extractListAndTotal(payload, headerTotals) {
-  const list = Array.isArray(payload)
-    ? payload
-    : (payload?.items ?? payload?.results ?? payload?.data ?? []);
-  const total = headerTotals?.total
-    || payload?.total
-    || payload?.count
-    || (Array.isArray(list) ? list.length : 0);
-  return { list, total };
-}
-
-// ---------- Render ----------
-function clearTable() { $("tbody").innerHTML = ""; }
-
-function renderRows(items) {
-  const tbody = $("tbody");
-  if (!items || items.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;opacity:.7">Nenhum registro encontrado</td></tr>`;
-    markSortedColumn();
-    return;
-  }
-  items = sortItems(items);
-  tbody.innerHTML = items.map(it => {
-    const n = normItem(it);
-    return `
-      <tr>
-        <td>${n.id}</td>
-        <td>${(n.data || "").toString().replace("T"," ")}</td>
-        <td>${n.tipo}</td>
-        <td class="right">${fmtBRL(n.valor)}</td>
-        <td>${n.descricao ?? ""}</td>
-      </tr>
-    `;
-  }).join("");
-  markSortedColumn();
-}
-
-function renderTotals(t) {
-  if (!t || (t.tCred === 0 && t.tDeb === 0 && t.tSaldo === 0)) {
-    // fallback: soma visível
-    let cred = 0, deb = 0;
-    [...$("tbody").querySelectorAll("tr")].forEach(tr => {
-      const tipo = tr.children[2]?.textContent?.trim();
-      const vTxt = tr.children[3]?.textContent?.replace(/[^\d,-]/g, "")
-                  .replace(/\./g, "").replace(",", ".") || "0";
-      const v = Number(vTxt);
-      if (tipo === "CREDITO") cred += v;
-      if (tipo === "DEBITO")  deb  += v;
-    });
-    $("tCred").textContent  = `Crédito: ${fmtBRL(cred)}`;
-    $("tDeb").textContent   = `Débito: ${fmtBRL(deb)}`;
-    $("tSaldo").textContent = `Saldo: ${fmtBRL(cred - deb)}`;
-    return;
-  }
-  $("tCred").textContent  = `Crédito: ${fmtBRL(t.tCred)}`;
-  $("tDeb").textContent   = `Débito: ${fmtBRL(t.tDeb)}`;
-  $("tSaldo").textContent = `Saldo: ${fmtBRL(t.tSaldo)}`;
-}
-
-function updatePageInfo(total = null) {
-  const p = state.page;
-  const size = state.pageSize || 10;
-  const pages = total != null && total > 0 ? Math.max(1, Math.ceil(total / size)) : 1;
-  $("pageInfo").textContent = `Pág. ${p} de ${pages}`;
-  $("prev").disabled = (p <= 1);
-  $("next").disabled = (total != null && p >= pages);
-}
-
-// ---------- Loading ----------
-function setLoading(on){
-  document.body.classList.toggle("loading", !!on);
-}
-
-// ---------- Ações ----------
-async function carregarExtrato() {
-  readUIToState();
-  if (!state.baseUrl) { alert("Defina a BASE_URL"); return; }
-
-  const ledgerId = Number($("ledgerId")?.value || state.ledgerId || 1);
-
-  const params = {
+  const params = new URLSearchParams({
     page: state.page,
     page_size: state.pageSize,
-    tipo: state.tipo || "",
-    start: asStartISO(state.dataIni),
-    end:   asEndISO(state.dataFim),
-  };
+    order_by: state.sortField || "data",
+    order_dir: state.sortDir || "desc",
+  });
+  if (state.tipo) params.set("tipo", state.tipo);
+  if (state.start) params.set("start", state.start);
+  if (state.end) params.set("end", state.end);
 
-  try {
-    setLoading(true);
-    $("aplicar").disabled = true;
-    $("aplicar").textContent = "Carregando...";
+  return `${baseUrl}/api/v1/ledger/${ledgerId}?${params.toString()}`;
+}
+function calcActiveFilters() {
+  const active = [];
+  if (state.start || state.end) active.push("datas");
+  if (state.tipo) active.push(state.tipo.toLowerCase());
+  if (Number(state.pageSize) !== 10) active.push(`itens:${state.pageSize}`);
+  return active;
+}
+function updateBadges() {
+  const box = document.getElementById("statusBadges");
+  if (!box) return;
+  const active = calcActiveFilters();
+  if (!active.length) { box.innerHTML = `<span class="pill ghost">0 filtros ativos</span>`; return; }
+  box.innerHTML = [
+    `<span class="pill ok">${active.length} filtros ativos</span>`,
+    ...active.map(x => `<span class="pill">${x}</span>`)
+  ].join(" ");
+}
 
-    const { data, totals } = await apiGET(`/api/v1/ledger/${ledgerId}`, params);
-    const { list, total }  = extractListAndTotal(data, totals);
+async function fetchAndRender(){
+  try{
+    setLoading(true); saveLocal();
+    const url = buildURL();
+    const headers = { "Content-Type": "application/json" };
+    if (state.token?.trim()) headers["Authorization"] = `Bearer ${state.token.trim()}`;
 
-    lastPageItems = list || [];
-    renderRows(lastPageItems);
-    renderTotals(totals);
-    updatePageInfo(total ?? null);
-  } catch (err) {
-    console.error(err);
-    if (/HTTP 401/.test(err.message)) {
-      alert("Token inválido/expirado (401). Faça login e cole o token.");
+    const resp = await fetch(url, { headers });
+    if (!resp.ok){
+      const txt = await resp.text().catch(()=> "");
+      showBanner(`Erro HTTP ${resp.status} — ${txt || resp.statusText}`, "error");
+      renderRows([]); renderTotalsFromPage([]); return;
+    }
+
+    const data = await resp.json();
+    const rows = Array.isArray(data) ? data : [];
+    console.log("Linhas recebidas da API:", rows.length);
+    state.lastPageItems = rows;
+
+    renderRows(rows);
+
+    // Totais pelos headers (globais); fallback = página
+    document.body.classList.remove("loading");
+
+    const h = (n) => resp.headers.get(n) || resp.headers.get(n.toLowerCase());
+    const hasTotals = !!h("X-Total");
+    if (hasTotals){
+      const elC = getEl.tCred();  if (elC) elC.textContent  = `Crédito: ${money(h("X-Total-Credito"))}`;
+      const elD = getEl.tDeb();   if (elD) elD.textContent  = `Débito: ${money(h("X-Total-Debito"))}`;
+      const elS = getEl.tSaldo(); if (elS) elS.textContent  = `Saldo: ${money(h("X-Total-Saldo"))}`;
     } else {
-      alert(`Erro ao carregar extrato:\n${err.message}`);
+      renderTotalsFromPage(rows);
     }
-  } finally {
+
+    // paginação
+    const total = Number(h("X-Total") || rows.length || 0);
+    const page  = Number(h("X-Page") || state.page);
+    const ps    = Number(h("X-Page-Size") || state.pageSize);
+    const totalPages = Number(h("X-Total-Pages") || Math.max(1, Math.ceil(total / Math.max(1, ps))));
+    renderPagination(page, totalPages);
+    updateBadges();     // ✅ só atualiza badges, sem recursão
+
+      
+}catch(err){
+    console.error(err);
+    showBanner(`Falha: ${err?.message || err}`, "error");
+    renderRows([]); renderTotalsFromPage([]);
+  }finally{
     setLoading(false);
-    $("aplicar").disabled = false;
-    $("aplicar").textContent = "Aplicar filtros";
   }
 }
-
-function salvarConfig() {
-  readUIToState();
-  saveLocal();
-  alert("Config salva ✅");
+function renderSkeletonRows(n = state.pageSize || 10) {
+  const tbody = document.getElementById("tbody") || document.querySelector("#tabela tbody");
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  for (let i = 0; i < n; i++) {
+    const tr = document.createElement("tr");
+    tr.className = "skeleton-row";
+    tr.innerHTML = `
+      <td><span class="skeleton short"></span></td>
+      <td><span class="skeleton long"></span></td>
+      <td><span class="skeleton short"></span></td>
+      <td class="right"><span class="skeleton price"></span></td>
+      <td><span class="skeleton long"></span></td>
+    `;
+    tbody.appendChild(tr);
+  }
 }
-function limparConfig() {
-  localStorage.removeItem(SKEY);
-  Object.assign(state, {
-    baseUrl: "", token: "", page: 1, pageSize: 10, tipo: "",
-    dataIni: "", dataFim: "", ledgerId: 1, sortBy: null, sortDir: "asc"
-  });
-  applyStateToUI();
-  clearTable();
-  renderTotals({ tCred:0, tDeb:0, tSaldo:0 });
-}
+function renderRows(items) {
+  const table = document.getElementById("tabela");
+  const tbody = document.getElementById("tbody") || table?.querySelector("tbody");
+  if (!tbody) { console.warn("tbody não encontrado"); return; }
 
-function aplicarFiltros() { state.page = 1; carregarExtrato(); }
-function limparFiltros() {
-  $("dataIni").value = "";
-  $("dataFim").value = "";
-  $("tipo").value = "";
-  $("pageSize").value = "10";
-  aplicarFiltros();
-}
-function paginar(dir) {
-  state.page += (dir === "next" ? 1 : -1);
-  if (state.page < 1) state.page = 1;
-  carregarExtrato();
-}
+  // limpa tudo (inclusive skeleton)
+  while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
 
-function baixarCSV() {
-  const rows = [["ID","DATA/HORA","TIPO","VALOR","DESCRIÇÃO"]];
-  [...$("tbody").querySelectorAll("tr")].forEach(tr => {
-    const cols = [...tr.children].map(td => `"${(td.textContent || "").replace(/"/g,'""')}"`);
-    rows.push(cols);
-  });
-  const csv = rows.map(r => r.join(";")).join("\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = `extrato_p${state.page}.csv`;
-  a.click();
-  URL.revokeObjectURL(a.href);
-}
-
-async function baixarCSVAll(){
-  readUIToState();
-  const ledgerId = Number($("ledgerId")?.value || state.ledgerId || 1);
-  const baseParams = {
-    page_size: state.pageSize,
-    tipo: state.tipo || "",
-    start: asStartISO(state.dataIni),
-    end:   asEndISO(state.dataFim),
-  };
-
-  const rows = [["ID","DATA/HORA","TIPO","VALOR","DESCRIÇÃO"]];
-  let page = 1, pages = null;
-
-  try {
-    setLoading(true);
-
-    // 1ª página
-    let { data, totals } = await apiGET(`/api/v1/ledger/${ledgerId}`, { ...baseParams, page });
-    let { list } = extractListAndTotal(data, totals);
-    list.forEach(it => {
-      const n = normItem(it);
-      rows.push([n.id, (n.data||"").toString().replace("T"," "), n.tipo, fmtBRL(n.valor), n.descricao ?? ""]);
-    });
-
-    if (totals?.total && baseParams.page_size)
-      pages = Math.max(1, Math.ceil(totals.total / baseParams.page_size));
-
-    // Demais páginas
-    for (page = 2; !pages || page <= pages; page++){
-      const resp = await apiGET(`/api/v1/ledger/${ledgerId}`, { ...baseParams, page });
-      const { list } = extractListAndTotal(resp.data, resp.totals);
-      if (!list || list.length === 0) break;
-      list.forEach(it => {
-        const n = normItem(it);
-        rows.push([n.id, (n.data||"").toString().replace("T"," "), n.tipo, fmtBRL(n.valor), n.descricao ?? ""]);
-      });
-      if (!pages && list.length < (baseParams.page_size || 10)) break;
-    }
-  } catch (e) {
-    alert("Falha ao baixar CSV (Tudo): " + e.message);
+  if (!items || !items.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 5;
+    td.textContent = "Sem dados para os filtros selecionados.";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
     return;
-  } finally {
-    setLoading(false);
   }
 
-  const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(";")).join("\n");
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
-  a.download = `extrato_${ledgerId}_todas_paginas.csv`;
-  a.click();
-  URL.revokeObjectURL(a.href);
+  // cria linhas reais
+  for (const it of items) {
+    const tr = document.createElement("tr");
+
+    const tdId = document.createElement("td");
+    tdId.textContent = String(it.id ?? "");
+
+    const tdDt = document.createElement("td");
+    const d = it.data ? new Date(it.data) : null;
+    tdDt.textContent = d && !isNaN(d) ? d.toLocaleString("pt-BR") : (it.data || "");
+
+    const tdTipo = document.createElement("td");
+    tdTipo.textContent = it.tipo || "";
+
+    const tdVal = document.createElement("td");
+    tdVal.className = (it.tipo === "DEBITO" ? "neg" : "pos") + " right";
+    tdVal.textContent = money(it.valor);
+
+    const tdDesc = document.createElement("td");
+    tdDesc.textContent = it.descricao || "";
+
+    tr.append(tdId, tdDt, tdTipo, tdVal, tdDesc);
+    tbody.appendChild(tr);
+  }
 }
 
-// ---------- Expor no escopo global (opcional, ajuda no console) ----------
-window.carregarExtrato  = carregarExtrato;
-window.aplicarFiltros   = aplicarFiltros;
-window.baixarCSV        = baixarCSV;
-window.baixarCSVAll     = baixarCSVAll;
 
-// ---------- Bind ----------
-document.addEventListener("DOMContentLoaded", () => {
-  loadLocal();
-  applyStateToUI();
+ 
 
-  const bind = (id, fn) => { const el = $(id); if (el) { if (!el.type) el.type = "button"; el.addEventListener("click", fn); } };
-  bind("saveCfg", salvarConfig);
-  bind("clearCfg", limparConfig);
-  bind("aplicar",  (e) => { e.preventDefault(); aplicarFiltros(); });
-  bind("limpar",   (e) => { e.preventDefault(); limparFiltros(); });
-  bind("prev",     () => paginar("prev"));
-  bind("next",     () => paginar("next"));
-  bind("baixarCSV", baixarCSV);
-  bind("baixarCSVAll", baixarCSVAll);
 
-  $("pageSize")?.addEventListener("change", () => { state.page = 1; carregarExtrato(); });
-  $("ledgerId")?.addEventListener("change", () => { state.page = 1; readUIToState(); saveLocal(); carregarExtrato(); });
+function renderTotalsFromPage(items){
+  const credito = (items||[]).filter(x=>x.tipo==="CREDITO").reduce((a,b)=>a+Number(b.valor||0),0);
+  const debito  = (items||[]).filter(x=>x.tipo==="DEBITO").reduce((a,b)=>a+Number(b.valor||0),0);
+  const elC = getEl.tCred();  if (elC) elC.textContent = `Crédito: ${money(credito)}`;
+  const elD = getEl.tDeb();   if (elD) elD.textContent = `Débito: ${money(debito)}`;
+  const elS = getEl.tSaldo(); if (elS) elS.textContent = `Saldo: ${money(credito - debito)}`;
+}
 
-  // Presets de data
-  $("presetHoje")   ?.addEventListener("click", ()=>{ setDateRangeDays(1);  aplicarFiltros(); });
-  $("preset7")      ?.addEventListener("click", ()=>{ setDateRangeDays(7);  aplicarFiltros(); });
-  $("preset30")     ?.addEventListener("click", ()=>{ setDateRangeDays(30); aplicarFiltros(); });
-  $("presetMes")    ?.addEventListener("click", ()=>{ setDateMonthCurrent(); aplicarFiltros(); });
-  $("presetLimpar") ?.addEventListener("click", ()=>{ $("dataIni").value=""; $("dataFim").value=""; aplicarFiltros(); });
+function renderPagination(page, totalPages){
+  const pinfo = getEl.pageInfo(); if (pinfo) pinfo.textContent = `Pág. ${page} de ${totalPages}`;
+  const prev = $("prev"), next = $("next");
+  if (prev) { prev.disabled = page <= 1; prev.onclick = ()=>{ if (state.page>1){ state.page--; fetchAndRender(); } }; }
+  if (next) { next.disabled = page >= totalPages; next.onclick = ()=>{ if (!next.disabled){ state.page++; fetchAndRender(); } }; }
+}
 
-  // Enter nas datas = aplicar
-  ["dataIni","dataFim"].forEach(id=>{
-    document.getElementById(id)?.addEventListener("keydown", e=>{
-      if(e.key==="Enter"){ e.preventDefault(); aplicarFiltros(); }
-    });
+// ---------- CSV ----------
+function download(filename, text){
+  const a = document.createElement("a");
+  a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(text);
+  a.download = filename; document.body.appendChild(a); a.click(); a.remove();
+}
+function toCSV(rows){
+  const header = ["id","data","tipo","valor","descricao"];
+  const body = (rows||[]).map(r=>[
+    r.id, r.data, r.tipo, String(r.valor).replace(".",","), (r.descricao||"").replace(/\n/g," ").replace(/"/g,'""')
+  ]);
+  return [header, ...body].map(cols=>cols.map(c=>`"${String(c)}"`).join(";")).join("\n");
+}
+$("baixarCSV")?.addEventListener("click", ()=> download("extrato.csv", toCSV(state.lastPageItems)));
+$("baixarCSVAll")?.addEventListener("click", async ()=>{
+  try{
+    setLoading(true);
+    const headers = { "Content-Type": "application/json" };
+    if (state.token?.trim()) headers["Authorization"] = `Bearer ${state.token.trim()}`;
+
+    const first = await fetch(buildURL(), { headers });
+    if (!first.ok) throw new Error(`HTTP ${first.status}`);
+    const j1 = await first.json();
+    const h = (n) => first.headers.get(n) || first.headers.get(n.toLowerCase());
+    const total = Number(h("X-Total") || j1.length || 0);
+    const ps = Number(h("X-Page-Size") || state.pageSize);
+    const totalPages = Number(h("X-Total-Pages") || Math.max(1, Math.ceil(total / Math.max(1, ps))));
+    let all = Array.isArray(j1) ? [...j1] : [];
+
+    for(let p=2;p<=totalPages;p++){
+      const url = buildURL().replace(/page=\d+/, `page=${p}`);
+      const r = await fetch(url, { headers });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const j = await r.json(); all.push(...j);
+    }
+    download("extrato_tudo.csv", toCSV(all));
+  }catch(e){ showBanner(`Falha CSV (Tudo): ${e.message||e}`,"error"); }
+  finally{ setLoading(false); }
+});
+
+// ---------- Inicialização ----------
+function hydrateFormFromState(){
+  if ($("baseUrl"))  $("baseUrl").value  = state.baseUrl || "";
+  if ($("token"))    $("token").value    = state.token || "";
+  if ($("ledgerId")) $("ledgerId").value = state.ledgerId || 1;
+  if ($("pageSize")) $("pageSize").value = state.pageSize;
+  if ($("tipo"))     $("tipo").value     = state.tipo || "";
+  if ($("dataIni"))  $("dataIni").value  = state.start ? new Date(state.start).toISOString().slice(0,10) : "";
+  if ($("dataFim"))  $("dataFim").value  = state.end ? new Date(state.end).toISOString().slice(0,10) : "";
+}
+function applyConfigFromForm(){
+  state.baseUrl = $("baseUrl")?.value?.trim() || state.baseUrl;
+  state.token   = $("token")?.value?.trim()   || state.token;
+  state.ledgerId= Number($("ledgerId")?.value) || state.ledgerId;
+  state.pageSize= Number($("pageSize")?.value) || state.pageSize;
+  state.tipo    = $("tipo")?.value || "";
+  const di = $("dataIni")?.value || ""; const df = $("dataFim")?.value || "";
+  state.start = di ? new Date(di+"T00:00:00").toISOString() : "";
+  state.end   = df ? new Date(df+"T23:59:59").toISOString() : "";
+  state.page = 1; saveLocal();
+}
+
+document.addEventListener("DOMContentLoaded", ()=>{
+  loadLocal(); hydrateFormFromState(); renderSortIndicators();
+
+  $("saveCfg")?.addEventListener("click", ()=>{ applyConfigFromForm(); showBanner("Config salva.","ok"); });
+  $("clearCfg")?.addEventListener("click", ()=>{ localStorage.removeItem(LS_KEY); showBanner("Config limpa.","ok"); });
+
+  $("aplicar")?.addEventListener("click", ()=>{ applyConfigFromForm(); fetchAndRender(); });
+  $("limpar")?.addEventListener("click", ()=>{
+    if ($("dataIni")) $("dataIni").value = "";
+    if ($("dataFim")) $("dataFim").value = "";
+    state.start = ""; state.end = ""; state.page = 1; fetchAndRender();
   });
 
-  // Sort nos cabeçalhos
+  // chips
+  $("presetHoje")?.addEventListener("click", ()=>{
+    const d = new Date().toISOString().slice(0,10);
+    $("dataIni").value = d; $("dataFim").value = d; $("aplicar").click();
+  });
+  $("preset7")?.addEventListener("click", ()=>{ const e=new Date(); const s=new Date(); s.setDate(e.getDate()-6);
+    $("dataIni").value=s.toISOString().slice(0,10); $("dataFim").value=e.toISOString().slice(0,10); $("aplicar").click();
+  });
+  $("preset30")?.addEventListener("click", ()=>{ const e=new Date(); const s=new Date(); s.setDate(e.getDate()-29);
+    $("dataIni").value=s.toISOString().slice(0,10); $("dataFim").value=e.toISOString().slice(0,10); $("aplicar").click();
+  });
+  $("presetMes")?.addEventListener("click", ()=>{ const n=new Date(); const s=new Date(n.getFullYear(),n.getMonth(),1);
+    const e=new Date(n.getFullYear(),n.getMonth()+1,0);
+    $("dataIni").value=s.toISOString().slice(0,10); $("dataFim").value=e.toISOString().slice(0,10); $("aplicar").click();
+  });
+  $("presetLimpar")?.addEventListener("click", ()=>{ $("limpar").click(); });
+
+  // sort nos cabeçalhos
   document.querySelectorAll("th.sortable").forEach(th=>{
     th.addEventListener("click", ()=>{
-      const key = th.dataset.key;
-      if (state.sortBy === key){
-        state.sortDir = (state.sortDir === "asc" ? "desc" : "asc");
-      } else {
-        state.sortBy = key;
-        state.sortDir = "asc";
-      }
-      renderRows(lastPageItems);
+      const key = th.dataset.key || th.dataset.field; // <- compat
+      if (!key) return;
+      if (state.sortField === key){ state.sortDir = state.sortDir === "asc" ? "desc" : "asc"; }
+      else { state.sortField = key; state.sortDir = "asc"; }
+      saveLocal(); renderSortIndicators(); fetchAndRender();
     });
   });
 
-  if (state.baseUrl) carregarExtrato();
+  // mudança de page size
+  $("pageSize")?.addEventListener("change", ()=>{ state.pageSize = Number($("pageSize").value)||10; state.page=1; fetchAndRender(); });
+
+  if (state.baseUrl) fetchAndRender();
 });

@@ -130,3 +130,28 @@ body.loading .table-wrap::after{
 
 /* mobile: centraliza se faltar espaço */
 @media (max-width:640px){ .footer .btns{ justify-content:center; } }
+.skeleton-row td { padding: 10px 8px; }
+.skeleton {
+  display: inline-block; height: 12px; border-radius: 6px;
+  background: linear-gradient(90deg,#1f2937 25%,#374151 37%,#1f2937 63%);
+  background-size: 400% 100%; animation: shimmer 1.2s infinite linear;
+}
+.skeleton.short { width: 40%; }
+.skeleton.long  { width: 80%; }
+.skeleton.price { width: 60px; }
+@keyframes shimmer { 0%{background-position:0% 0} 100%{background-position:100% 0} }
+/* mostra skeleton só quando body.loading estiver ativo */cd ~/projetos/dils_pay_core/frontend
+nano style.css
+/* skeleton só aparece quando body.loading */
+.skeleton-row { display: none; }
+.loading .skeleton-row { display: table-row; }
+/* Banner fixo no topo do card */
+.banner{
+  position: sticky; top: 0; z-index: 100;
+  padding: 10px 12px; border-radius: 10px;
+  margin-bottom: 12px; font-weight: 600; letter-spacing: .2px;
+  border: 1px solid transparent;
+}
+.banner.ok   { background: #064e3b; color: #d1fae5; border-color: #065f46; }
+.banner.error{ background: #7f1d1d; color: #fee2e2; border-color: #991b1b; }
+.banner.warn { background: #78350f; color: #fef3c7; border-color: #92400e; }
