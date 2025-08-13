@@ -36,3 +36,12 @@ venv/
 backend/dev.db
 frontend/*.csv
 backend/app/api/v1/routes/*.bak_*
+# venv
+.venv/
+venv/
+
+# arquivos locais/temporários
+.env
+backend/dev.db
+frontend/*.csv
+backend/app/api/v1/routes/*.bak_*
