@@ -27,3 +27,12 @@ frontend/*.csv
 
 # Docker
 *.pid
+# venv
+.venv/
+venv/
+
+# arquivos locais/temporários
+.env
+backend/dev.db
+frontend/*.csv
+backend/app/api/v1/routes/*.bak_*
