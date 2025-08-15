@@ -1,0 +1,932 @@
+// ==== HELPERS GLOBAIS (no window) ====
+window.apiBase = function () {
+  return (document.getElementById('BASE_URL')?.value || localStorage.getItem('BASE_URL') || '')
+    .trim()
+    .replace(/\/+$/, '');
+};
+window.apiToken = function () {
+  return (document.getElementById('token')?.value || localStorage.getItem('TOKEN') || '').trim();
+};
+window.buildLedgerUrl = function (ledgerId, params) {
+  const baseUrl = window.apiBase();
+  return `${baseUrl}/api/v1/ledger/${ledgerId}?${params.toString()}`;
+};
+
+
+// ==== PATCH SEGURO DO fetch (prefixa BASE_URL e injeta Bearer) ====
+(function () {
+  const ORIG_FETCH = window.fetch.bind(window);
+
+  window.fetch = function (input, init) {
+    if (!input) return ORIG_FETCH(input, init);
+
+    let url = null, req = null;
+    if (typeof input === 'string') {
+      url = input;
+    } else if (input && typeof input.url === 'string') {
+      url = input.url;
+      req  = input;
+    } else {
+      return ORIG_FETCH(input, init);
+    }
+
+    const isAbsolute = /^https?:\/\//i.test(url);
+
+    // 1) Se for relativo e parece rota de API, prefixa BASE_URL
+    if (!isAbsolute && /(^|\/)api\//i.test(url)) {
+      const normalized = ('/' + url.replace(/^\.?\/+/, '')).replace(/\/{2,}/g, '/');
+      url = window.apiBase() + normalized;
+    }
+
+    // 2) Se vier hardcoded (127.0.0.1/localhost:8001), reescreve para BASE_URL
+    const base = window.apiBase();
+    if (base) {
+      url = url.replace(/^https?:\/\/(?:127\.0\.0\.1|localhost):8001/i, base);
+    }
+
+    // 3) Injeta Authorization se faltar
+    const headers = new Headers((init && init.headers) || (req && req.headers) || undefined);
+    if (!headers.has('Authorization')) {
+      const t = window.apiToken();
+      if (t) headers.set('Authorization', 'Bearer ' + t);
+    }
+
+    // 4) Dispara o fetch com a URL corrigida
+    if (typeof input === 'string') {
+      return ORIG_FETCH(url, { ...(init || {}), headers });
+    } else {
+      const opts = { ...(init || {}), headers, method: (init && init.method) || req.method };
+      return ORIG_FETCH(new Request(url, opts));
+    }
+  };
+})();
+
+
+    // 1) rotas relativas começam com /api -> prefixa BASE_URL
+    if (url.startsWith('/api/')) url = apiBase() + url;
+
+    // 2) se a URL vier hardcoded (127.0.0.1/localhost), reescreve para BASE_URL
+    const base = apiBase();
+    if (base) {
+      url = url
+        .replace(/^https?:\/\/127\.0\.0\.1:8001/, base)
+        .replace(/^https?:\/\/localhost:8001/, base);
+    }
+
+    // 3) injeta Authorization se não existir
+   const headers = new Headers((init && init.headers) || (req && req.headers) || {});
+if (!headers.has('Authorization')) {
+  const t = apiToken();
+  if (t) headers.set('Authorization', 'Bearer ' + t);
+}
+
+const opts = { ...(init || {}), headers };
+
+if (typeof input === 'string') {
+  return ORIG_FETCH(url, opts);
+} else {
+  return ORIG_FETCH(new Request(url, opts));
+}
+
+  };
+
+  console.log('[fetch-patch v2] ativo. BASE_URL =', apiBase());
+})();
+
+
+// ================= DilsPay — extrato.js (limpo e completo) =================
+"use strict";
+
+// LocalStorage key
+const LS_KEY = "dilspay_extrato_cfg_v1";
+
+// Estado global
+const state = {
+  baseUrl: "",
+  token: "",
+  ledgerId: 1,
+  start: "",
+  end: "",
+  tipo: "",
+  page: 1,
+  pageSize: 10,
+  sortField: "data", // 'data' na UI == criado_em no backend
+  sortDir: "desc",
+  lastPageItems: [],
+  ledgers: [],
+};
+
+// Helpers DOM
+const $ = (id) => document.getElementById(id);
+const getEl = {
+  pageInfo: () => $("pageInfo") || $("pagInfo"),
+  tCred: () => $("tCred") || $("totCredito"),
+  tDeb: () => $("tDeb") || $("totDebito"),
+  tSaldo: () => $("tSaldo") || $("totSaldo"),
+  tbody: () => $("tbody") || document.querySelector("#tabela tbody"),
+};
+const money = (v) => Number(v || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+// Persistência
+function loadLocal() {
+  try { Object.assign(state, JSON.parse(localStorage.getItem(LS_KEY) || "{}")); } catch {}
+}
+function saveLocal() {
+  localStorage.setItem(LS_KEY, JSON.stringify({
+    baseUrl: state.baseUrl, token: state.token, ledgerId: state.ledgerId,
+    start: state.start, end: state.end, tipo: state.tipo,
+    page: state.page, pageSize: state.pageSize,
+    sortField: state.sortField, sortDir: state.sortDir,
+  }));
+}
+
+// UI: loading / banner / sort
+function setLoading(on = true) {
+  document.body.classList.toggle("loading", !!on);
+  const b = $("aplicar");
+  if (b) { b.disabled = !!on; b.textContent = on ? "Carregando..." : "Aplicar filtros"; }
+  if (on) renderSkeletonRows();
+}
+function showBanner(msg, type="ok"){
+  const el = $("banner"); // se não existir, só loga
+  console[type === "error" ? "error" : "log"](msg);
+  if (!el) return;
+  el.className = `banner ${type}`; el.textContent = msg; el.style.display = "block";
+  clearTimeout(showBanner._t); showBanner._t = setTimeout(()=> el.style.display="none", 5000);
+}
+function renderSortIndicators() {
+  document.querySelectorAll("th.sortable").forEach(th=>{
+    th.classList.remove("asc","desc","active");
+    const key = th.dataset.key || th.dataset.field;
+    if (key === state.sortField) {
+      th.classList.add("active", state.sortDir === "asc" ? "asc" : "desc");
+    }
+  });
+}
+
+// URL da API
+function buildURL(){
+  const baseUrl = (state.baseUrl || "").replace(/\/+$/, "");
+  const ledgerId = Number($("ledgerId")?.value) || Number(state.ledgerId) || 1;
+
+  const params = new URLSearchParams({
+    page: String(state.page),
+    page_size: String(state.pageSize),
+    order_by: state.sortField || "data",
+    order_dir: state.sortDir || "desc",
+  });
+  if (state.tipo) params.set("tipo", state.tipo);
+  if (state.start) params.set("start", state.start);
+  if (state.end) params.set("end", state.end);
+
+ 
+ // BASE_URL e TOKEN direto do input/localStorage (sem barras finais)
+function apiBase() {
+  return (document.getElementById('BASE_URL')?.value || localStorage.getItem('BASE_URL') || '')
+    .trim()
+    .replace(/\/+$/, '');
+}
+
+function apiToken() {
+  return (document.getElementById('token')?.value || localStorage.getItem('TOKEN') || '').trim();
+}
+
+// URL do extrato sempre usando o BASE_URL atual
+function buildLedgerUrl(ledgerId, params) {
+  const baseUrl = apiBase();
+  return `${baseUrl}/api/v1/ledger/${ledgerId}?${params.toString()}`;
+}
+// (exemplo de uso)
+// const url = buildLedgerUrl(state.ledgerId, params);
+// const res = await fetch(url, { headers: { Authorization: `Bearer ${apiToken()}` }});
+
+
+// EXEMPLO de uso no fetch do extrato (ajuste o nome das variáveis se preciso):
+// const url = buildLedgerUrl(state.ledgerId, params);
+// const res = await fetch(url, { headers: { Authorization: `Bearer ${apiToken()}` }});
+
+}
+
+// Badges de filtros
+function calcActiveFilters() {
+  const active = [];
+  if (state.start || state.end) active.push("datas");
+  if (state.tipo) active.push(state.tipo.toLowerCase());
+  if (Number(state.pageSize) !== 10) active.push(`itens:${state.pageSize}`);
+  return active;
+}
+function updateBadges() {
+  const box = document.getElementById("statusBadges");
+  if (!box) return;
+  const active = calcActiveFilters();
+  if (!active.length) { box.innerHTML = `<span class="pill ghost">0 filtros ativos</span>`; return; }
+  box.innerHTML = [
+    `<span class="pill ok">${active.length} filtros ativos</span>`,
+    ...active.map(x => `<span class="pill">${x}</span>`)
+  ].join(" ");
+}
+
+// Fetch + render
+async function fetchAndRender(){
+  try{
+    setLoading(true); saveLocal();
+    const url = buildURL();
+    const headers = { "Content-Type": "application/json" };
+    if (state.token?.trim()) headers["Authorization"] = `Bearer ${state.token.trim()}`;
+
+    const resp = await fetch(url, { headers });
+    if (!resp.ok){
+      const txt = await resp.text().catch(()=> "");
+      showBanner(`Erro HTTP ${resp.status} — ${txt || resp.statusText}`, "error");
+      renderRows([]); renderTotalsFromPage([]); return;
+    }
+
+    const data = await resp.json();
+    const rows = Array.isArray(data) ? data : [];
+    state.lastPageItems = rows;
+    renderRows(rows);
+
+    // Totais pelos headers (globais); fallback = página
+    const h = (n) => resp.headers.get(n) || resp.headers.get(n.toLowerCase());
+    const hasTotals = !!h("X-Total");
+    if (hasTotals){
+      getEl.tCred()?.replaceChildren(document.createTextNode(`Crédito: ${money(h("X-Total-Credito"))}`));
+      getEl.tDeb()?.replaceChildren(document.createTextNode(`Débito: ${money(h("X-Total-Debito"))}`));
+      getEl.tSaldo()?.replaceChildren(document.createTextNode(`Saldo: ${money(h("X-Total-Saldo"))}`));
+    } else {
+      renderTotalsFromPage(rows);
+    }
+
+    // Paginação
+    const total = Number(h("X-Total") || rows.length || 0);
+    const page  = Number(h("X-Page") || state.page);
+    const ps    = Number(h("X-Page-Size") || state.pageSize);
+    const totalPages = Number(h("X-Total-Pages") || Math.max(1, Math.ceil(total / Math.max(1, ps))));
+    renderPagination(page, totalPages);
+    updateBadges();
+  }catch(err){
+    console.error(err);
+    showBanner(`Falha: ${err?.message || err}`, "error");
+    renderRows([]); renderTotalsFromPage([]);
+  }finally{
+    setLoading(false);
+  }
+}
+
+// Skeleton
+function renderSkeletonRows(n = state.pageSize || 10) {
+  const tbody = getEl.tbody();
+  if (!tbody) return;
+  tbody.innerHTML = "";
+  for (let i = 0; i < n; i++) {
+    const tr = document.createElement("tr");
+    tr.className = "skeleton-row";
+    tr.innerHTML = `
+      <td><span class="skeleton short"></span></td>
+      <td><span class="skeleton long"></span></td>
+      <td><span class="skeleton short"></span></td>
+      <td class="right"><span class="skeleton price"></span></td>
+      <td><span class="skeleton long"></span></td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+// Linhas reais
+function renderRows(items) {
+  const tbody = getEl.tbody();
+  if (!tbody) { console.warn("tbody não encontrado"); return; }
+  while (tbody.firstChild) tbody.removeChild(tbody.firstChild);
+
+  if (!items || !items.length) {
+    const tr = document.createElement("tr");
+    const td = document.createElement("td");
+    td.colSpan = 5;
+    td.textContent = "Sem dados para os filtros selecionados.";
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+    return;
+  }
+
+  for (const it of items) {
+    const tr = document.createElement("tr");
+
+    const tdId = document.createElement("td");
+    tdId.textContent = String(it.id ?? "");
+
+    const tdDt = document.createElement("td");
+    const d = it.data ? new Date(it.data) : null;
+    tdDt.textContent = d && !isNaN(d) ? d.toLocaleString("pt-BR") : (it.data || "");
+
+    const tdTipo = document.createElement("td");
+    tdTipo.textContent = it.tipo || "";
+
+    const tdVal = document.createElement("td");
+    tdVal.className = (it.tipo === "DEBITO" ? "neg" : "pos") + " right";
+    tdVal.textContent = money(it.valor);
+
+    const tdDesc = document.createElement("td");
+    tdDesc.textContent = it.descricao || "";
+
+    tr.append(tdId, tdDt, tdTipo, tdVal, tdDesc);
+    tbody.appendChild(tr);
+  }
+}
+
+// Totais (fallback página)
+function renderTotalsFromPage(items){
+  const credito = (items||[]).filter(x=>x.tipo==="CREDITO").reduce((a,b)=>a+Number(b.valor||0),0);
+  const debito  = (items||[]).filter(x=>x.tipo==="DEBITO").reduce((a,b)=>a+Number(b.valor||0),0);
+  const saldo   = credito - debito;
+  const elC = getEl.tCred();  if (elC) elC.textContent = `Crédito: ${money(credito)}`;
+  const elD = getEl.tDeb();   if (elD) elD.textContent = `Débito: ${money(debito)}`;
+  const elS = getEl.tSaldo(); if (elS) elS.textContent = `Saldo: ${money(saldo)}`;
+}
+
+// Paginação
+function renderPagination(page, totalPages){
+  const pinfo = getEl.pageInfo(); if (pinfo) pinfo.textContent = `Pág. ${page} de ${totalPages}`;
+  const prev = $("prev"), next = $("next");
+  if (prev) {
+    prev.disabled = page <= 1;
+    prev.onclick = ()=>{ if (state.page>1){ state.page--; fetchAndRender(); } };
+  }
+  if (next) {
+    next.disabled = page >= totalPages;
+    next.onclick = ()=>{ if (!next.disabled){ state.page++; fetchAndRender(); } };
+  }
+}
+
+// ---------- CSV ----------
+function download(filename, text){
+  const a = document.createElement("a");
+  a.href = "data:text/csv;charset=utf-8," + encodeURIComponent(text);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function toCSV(rows){
+  const header = ["id","data","tipo","valor","descricao"];
+  const body = (rows||[]).map(r=>[
+    r.id,
+    r.data,
+    r.tipo,
+    String(r.valor).replace(".",","), // BR
+    (r.descricao||"").replace(/\n/g," ").replace(/"/g,'""')
+  ]);
+  return [header, ...body]
+    .map(cols=>cols.map(c=>`"${String(c)}"`).join(";"))
+    .join("\n");
+}
+
+// Baixar CSV (página atual)
+$("baixarCSV")?.addEventListener("click", () => {
+  download("extrato.csv", toCSV(state.lastPageItems));
+});
+
+// Baixar CSV (Tudo) direto do servidor
+$("baixarCSVAll")?.addEventListener("click", () => {
+  const base = (state.baseUrl || "").replace(/\/+$/, "");
+  const id   = Number($("ledgerId")?.value || state.ledgerId || 1);
+
+  const qs = new URLSearchParams({
+    order_by: state.sortField || "data",
+    order_dir: state.sortDir || "desc",
+  });
+  if (state.tipo)  qs.set("tipo", state.tipo);
+  if (state.start) qs.set("start", state.start.slice(0,10)); // YYYY-MM-DD
+  if (state.end)   qs.set("end",   state.end.slice(0,10));
+
+  // dispara download direto do backend
+  window.location.href = `${base}/api/v1/ledger/${id}/csv?${qs.toString()}`;
+});
+
+
+// Ledgers (dropdown)
+async function fetchLedgers() {
+  const base = (state.baseUrl || "").trim();
+  if (!base) return [];
+  const headers = { "Content-Type": "application/json" };
+  if (state.token?.trim()) headers["Authorization"] = `Bearer ${state.token.trim()}`;
+
+  try {
+    const resp = await fetch(`${base}/api/v1/wallets`, { headers });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    state.ledgers = Array.isArray(data) ? data : [];
+    populateLedgerSelect();
+    return state.ledgers;
+  } catch (e) {
+    showBanner(`Falha ao carregar ledgers: ${e.message}`, "error");
+    return [];
+  }
+}
+function populateLedgerSelect() {
+  const sel = document.getElementById("ledgerSelect");
+  if (!sel) return;
+  sel.innerHTML = "";
+  if (!state.ledgers?.length) {
+    sel.innerHTML = `<option value="">(nenhum ledger encontrado)</option>`;
+    return;
+  }
+  for (const w of state.ledgers) {
+    const opt = document.createElement("option");
+    opt.value = String(w.id);
+    opt.textContent = `#${w.id} — user ${w.user_id} — saldo R$ ${Number(w.saldo).toFixed(2)}`;
+    sel.appendChild(opt);
+  }
+  const wanted = String(state.ledgerId || state.ledgers?.[0]?.id || "");
+  if (wanted) sel.value = wanted;
+  const inp = document.getElementById("ledgerId");
+  if (inp && sel.value) inp.value = sel.value;
+}
+
+// Form <-> state
+function hydrateFormFromState(){
+  if ($("baseUrl"))  $("baseUrl").value  = state.baseUrl || "";
+  if ($("token"))    $("token").value    = state.token || "";
+  if ($("ledgerId")) $("ledgerId").value = state.ledgerId || 1;
+  if ($("pageSize")) $("pageSize").value = state.pageSize;
+  if ($("tipo"))     $("tipo").value     = state.tipo || "";
+  if ($("dataIni"))  $("dataIni").value  = state.start ? new Date(state.start).toISOString().slice(0,10) : "";
+  if ($("dataFim"))  $("dataFim").value  = state.end ? new Date(state.end).toISOString().slice(0,10) : "";
+
+  const sel = document.getElementById("ledgerSelect");
+  if (sel) {
+    const val = String(state.ledgerId || "");
+    if (val) sel.value = val;
+  }
+  updateBadges();
+}
+function applyConfigFromForm(){
+  state.baseUrl = $("baseUrl")?.value?.trim() || state.baseUrl;
+  state.token   = $("token")?.value?.trim()   || state.token;
+  state.ledgerId= Number($("ledgerId")?.value) || state.ledgerId;
+  state.pageSize= Number($("pageSize")?.value) || state.pageSize;
+  state.tipo    = $("tipo")?.value || "";
+  const di = $("dataIni")?.value || ""; const df = $("dataFim")?.value || "";
+  state.start = di ? new Date(di+"T00:00:00").toISOString() : "";
+  state.end   = df ? new Date(df+"T23:59:59").toISOString() : "";
+  state.page = 1; saveLocal();
+}
+function applyFilters(){
+  applyConfigFromForm();
+  fetchAndRender();
+}
+
+// Wire da UI (uma única vez)
+function wireUI(){
+  // Salvar Config
+  $("saveCfg")?.addEventListener("click", ()=>{
+    applyConfigFromForm();
+    showBanner("Config salva.","ok");
+    fetchLedgers();          // recarrega dropdown após salvar BASE_URL/token
+  });
+
+  // Limpar Config
+  $("clearCfg")?.addEventListener("click", ()=>{
+    localStorage.removeItem(LS_KEY);
+    showBanner("Config limpa.","ok");
+    hydrateFormFromState();  // reflete limpeza no formulário
+    updateBadges();          // atualiza badges de filtros
+  });
+
+  // Aplicar filtros
+  $("aplicar")?.addEventListener("click", applyFilters);
+
+  // Limpar datas + reset página
+  $("limpar")?.addEventListener("click", ()=>{
+    if ($("dataIni")) $("dataIni").value = "";
+    if ($("dataFim")) $("dataFim").value = "";
+    state.start = ""; state.end = ""; state.page = 1;
+    fetchAndRender();
+  });
+
+  // Chips de período
+  $("presetHoje")?.addEventListener("click", ()=>{
+    const d = new Date().toISOString().slice(0,10);
+    $("dataIni").value = d; $("dataFim").value = d; applyFilters();
+  });
+  $("preset7")?.addEventListener("click", ()=>{
+    const e=new Date(); const s=new Date(); s.setDate(e.getDate()-6);
+    $("dataIni").value=s.toISOString().slice(0,10); $("dataFim").value=e.toISOString().slice(0,10); applyFilters();
+  });
+  $("preset30")?.addEventListener("click", ()=>{
+    const e=new Date(); const s=new Date(); s.setDate(e.getDate()-29);
+    $("dataIni").value=s.toISOString().slice(0,10); $("dataFim").value=e.toISOString().slice(0,10); applyFilters();
+  });
+  $("presetMes")?.addEventListener("click", ()=>{
+    const n=new Date(); const s=new Date(n.getFullYear(),n.getMonth(),1);
+    const e=new Date(n.getFullYear(),n.getMonth()+1,0);
+    $("dataIni").value=s.toISOString().slice(0,10); $("dataFim").value=e.toISOString().slice(0,10); applyFilters();
+  });
+  $("presetLimpar")?.addEventListener("click", ()=>{ $("limpar")?.click(); });
+
+  // Sort nos cabeçalhos
+  document.querySelectorAll("th.sortable").forEach(th=>{
+    th.addEventListener("click", ()=>{
+      const key = th.dataset.key || th.dataset.field;
+      if (!key) return;
+      if (state.sortField === key){ state.sortDir = state.sortDir === "asc" ? "desc" : "asc"; }
+      else { state.sortField = key; state.sortDir = "asc"; }
+      saveLocal(); renderSortIndicators(); fetchAndRender();
+    });
+  });
+
+  // Page size
+  $("pageSize")?.addEventListener("change", ()=>{
+    state.pageSize = Number($("pageSize").value) || 10;
+    state.page = 1; fetchAndRender();
+  });
+
+  // Atualizar lista de ledgers
+  $("reloadLedgers")?.addEventListener("click", async () => {
+    await fetchLedgers();
+    showBanner("Lista de ledgers atualizada.", "ok");
+  });
+
+  // Select de ledgers -> sincroniza com o input e aplica filtros
+  const selLedger = $("ledgerSelect");
+  if (selLedger) {
+    selLedger.addEventListener("change", () => {
+      state.ledgerId = Number(selLedger.value || 0);
+      const inp = $("ledgerId");
+      if (inp) inp.value = selLedger.value;
+      saveLocal();
+      applyFilters();
+    });
+  }
+}
+
+// Boot
+document.addEventListener("DOMContentLoaded", ()=>{
+  loadLocal();
+  hydrateFormFromState();
+  renderSortIndicators();
+  wireUI();
+  fetchLedgers();
+  if (state.baseUrl) fetchAndRender(); else updateBadges();
+});
+
+document.addEventListener('DOMContentLoaded', () => {
+  const btnAplicar = Array.from(document.querySelectorAll('button, a'))
+    .find(el => el.textContent.trim().toLowerCase().includes('aplicar filtros'));
+
+  if (!btnAplicar) return;
+
+  btnAplicar.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const ledgerId =
+      Number(document.getElementById('ledgerId')?.value) ||
+      Number(document.getElementById('ledgerSelect')?.value) || 1;
+
+    const qs = new URLSearchParams({
+      page: '1',
+      page_size: '10',
+      order_dir: 'desc'
+    });
+
+    const res = await fetch(window.buildLedgerUrl(ledgerId, qs), {
+      headers: { Authorization: 'Bearer ' + window.apiToken() }
+    });
+
+    const data = await res.json();
+    console.log('EXTRATO', data);
+    // TODO: aqui você preenche a tabela de fato (quando quiser faço esse render contigo).
+  });
+});
+document.addEventListener('DOMContentLoaded', () => {
+  const btnAplicar = Array.from(document.querySelectorAll('button, a'))
+    .find(el => el.textContent.trim().toLowerCase().includes('aplicar filtros'));
+
+  if (!btnAplicar) return;
+
+  btnAplicar.addEventListener('click', async (e) => {
+    e.preventDefault();
+    const ledgerId =
+      Number(document.getElementById('ledgerId')?.value) ||
+      Number(document.getElementById('ledgerSelect')?.value) || 1;
+
+    const qs = new URLSearchParams({
+      page: '1',
+      page_size: '10',
+      order_dir: 'desc'
+    });
+
+    const res = await fetch(window.buildLedgerUrl(ledgerId, qs), {
+      headers: { Authorization: 'Bearer ' + window.apiToken() }
+    });
+
+    const data = await res.json();
+    console.log('EXTRATO', data);
+    // TODO: aqui você preenche a tabela de fato (quando quiser faço esse render contigo).
+  });
+});
+
+// REMOVA o bloco anterior de DOMContentLoaded e cole este no FINAL do extrato.js
+(function () {
+  console.log('[bind] delegator ready');
+
+  document.addEventListener('click', async (e) => {
+    const el = e.target.closest('button, a');
+    if (!el) return;
+
+    const txt = (el.textContent || '').trim().toLowerCase();
+    if (!txt.includes('aplicar filtros')) return;
+
+    e.preventDefault();
+
+    const ledgerId =
+      Number(document.getElementById('ledgerId')?.value) ||
+      Number(document.getElementById('ledgerSelect')?.value) || 1;
+
+    const qs = new URLSearchParams({ page: '1', page_size: '10', order_dir: 'desc' });
+
+    const res = await fetch(window.buildLedgerUrl(ledgerId, qs), {
+      headers: { Authorization: 'Bearer ' + window.apiToken() }
+    });
+
+    const data = await res.json();
+    console.log('EXTRATO', data, Object.fromEntries(res.headers.entries()));
+    // TODO: depois a gente renderiza a tabela aqui.
+  });
+})();
+// ===== Render do extrato (tabela + totais) =====
+(function () {
+  const fmtMoney = n => (Number(n || 0)).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const fmtDate  = s => {
+    if (!s) return '';
+    const d = new Date(s);
+    return isNaN(d) ? String(s) : d.toLocaleString('pt-BR');
+  };
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+
+  function ensureUI() {
+    let box = document.getElementById('extratoBox');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'extratoBox';
+      const host = document.querySelector('.card') || document.querySelector('.container') || document.body;
+      host.appendChild(box);
+    }
+    if (!document.getElementById('extratoTable')) {
+      document.getElementById('extratoBox').innerHTML = `
+        <table id="extratoTable" style="width:100%; border-collapse:collapse; margin-top:12px;">
+          <thead>
+            <tr>
+              <th style="text-align:left;padding:8px;">ID</th>
+              <th style="text-align:left;padding:8px;">DATA/HORA</th>
+              <th style="text-align:left;padding:8px;">TIPO</th>
+              <th style="text-align:right;padding:8px;">VALOR (R$)</th>
+              <th style="text-align:left;padding:8px;">DESCRIÇÃO</th>
+            </tr>
+          </thead>
+          <tbody id="tbodyExtrato"></tbody>
+        </table>
+        <div id="totaisExtrato" style="margin-top:8px;opacity:.85">
+          <span>Crédito: <b id="kCredito">R$ 0,00</b></span> ·
+          <span>Débito: <b id="kDebito">R$ 0,00</b></span> ·
+          <span>Saldo: <b id="kSaldo">R$ 0,00</b></span>
+        </div>
+      `;
+    }
+  }
+
+  window.renderExtrato = function renderExtrato(rows, headers) {
+    ensureUI();
+    const tbody = document.getElementById('tbodyExtrato');
+
+    if (!Array.isArray(rows) || rows.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="5" style="padding:12px;opacity:.7">Sem dados para os filtros selecionados.</td></tr>`;
+    } else {
+      tbody.innerHTML = rows.map(r => `
+        <tr>
+          <td style="padding:8px;">${esc(r.id)}</td>
+          <td style="padding:8px;">${esc(fmtDate(r.data))}</td>
+          <td style="padding:8px;${r.tipo==='CREDITO'?'color:#22c55e':'color:#ef4444'}">${esc(r.tipo)}</td>
+          <td style="padding:8px;text-align:right;">${esc(fmtMoney(r.valor))}</td>
+          <td style="padding:8px;">${esc(r.descricao)}</td>
+        </tr>
+      `).join('');
+    }
+
+    // totais pelos headers (seu backend manda X-Total-*)
+    const h = k => (headers?.get?.(k) ?? '0').replace(',', '.');
+    const credito = Number(h('x-total-credito') || 0);
+    const debito  = Number(h('x-total-debito')  || 0);
+    const saldo   = Number(h('x-total-saldo')   || (credito - debito));
+
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = fmtMoney(v); };
+    set('kCredito', credito);
+    set('kDebito',  debito);
+    set('kSaldo',   saldo);
+  };
+})();
+// 1) Render da tabela
+function renderRows(list = []) {
+  const tbody = document.querySelector('#tabela-extrato tbody') || document.querySelector('tbody');
+  if (!tbody) return;
+  tbody.innerHTML = list.map(r => `
+    <tr>
+      <td>${r.id}</td>
+      <td>${(r.data || '').replace('T', ' ').slice(0, 19)}</td>
+      <td>${r.tipo}</td>
+      <td style="text-align:right">${Number(r.valor || 0).toFixed(2)}</td>
+      <td>${r.descricao || ''}</td>
+    </tr>
+  `).join('');
+}
+
+// 2) Totais a partir dos headers (front já tem os badges? ids: kCredito/kDebito/kSaldo)
+function updateTotalsFromHeaders(h) {
+  const get = (k) => h.get(k) || h.get(k.toLowerCase());
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '0,00'; };
+  set('kCredito', get('X-Total-Credito'));
+  set('kDebito',  get('X-Total-Debito'));
+  set('kSaldo',   get('X-Total-Saldo'));
+}
+
+// 3) Download CSV autenticado (faz o fetch e baixa via blob)
+async function baixarCsv(ledgerId, qs) {
+  const base = window.apiBase?.(); const tok = window.apiToken?.();
+  const url = `${base}/api/v1/ledger/${ledgerId}/csv?${qs.toString()}`;
+  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + tok }});
+  if (!res.ok) throw new Error(`CSV ${res.status}`);
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `extrato_wallet_${ledgerId}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(a.href);
+}
+
+// 4) Liga os botões existentes (Aplicar filtros / Baixar CSV)
+document.addEventListener('click', async (e) => {
+  const el = e.target.closest('button, a');
+  if (!el) return;
+  const txt = (el.textContent || '').toLowerCase();
+
+  // Aplicar filtros
+  if (txt.includes('aplicar filtros')) {
+    e.preventDefault();
+    const ledgerId = Number(document.getElementById('ledgerId')?.value)
+                  || Number(document.getElementById('ledgerSelect')?.value) || 1;
+
+    const qs = new URLSearchParams({
+      page: '1',
+      page_size: String(Number(document.querySelector('#pageSize')?.value) || 10),
+      order_dir: (document.querySelector('#orderDir')?.value || 'desc')
+    });
+
+    const res = await fetch(window.buildLedgerUrl(ledgerId, qs), {
+      headers: { Authorization: 'Bearer ' + window.apiToken() }
+    });
+    const data = await res.json().catch(() => []);
+    renderRows(data);
+    updateTotalsFromHeaders(res.headers);
+  }
+
+  // Baixar CSV
+  if (txt.includes('baixar csv') && !txt.includes('tudo')) {
+    e.preventDefault();
+    const ledgerId = Number(document.getElementById('ledgerId')?.value)
+                  || Number(document.getElementById('ledgerSelect')?.value) || 1;
+    const qs = new URLSearchParams({
+      page: '1',
+      page_size: String(Number(document.querySelector('#pageSize')?.value) || 10),
+      order_dir: (document.querySelector('#orderDir')?.value || 'desc')
+    });
+    baixarCsv(ledgerId, qs).catch(console.error);
+  }
+});
+/* ====== FIX: bind estável dos botões + handlers ====== */
+
+// 0) Utilidades que já existem? usa; senão faz fallback
+window.apiBase   = window.apiBase   || (() => (document.getElementById('BASE_URL')?.value || localStorage.getItem('BASE_URL') || '').trim().replace(/\/+$/,''));
+window.apiToken  = window.apiToken  || (() => (document.getElementById('token')?.value    || localStorage.getItem('TOKEN')    || '').trim());
+window.buildLedgerUrl = window.buildLedgerUrl || ((ledgerId, params) => `${window.apiBase()}/api/v1/ledger/${ledgerId}?${params.toString()}`);
+
+// 1) IDs estáveis nos botões (sem editar HTML agora)
+(function ensureButtonIds() {
+  const map = [
+    { id: 'btnSalvar',  match: /salvar\s+config/i },
+    { id: 'btnAplicar', match: /aplicar\s+filtros/i },
+    { id: 'btnCsv',     match: /baixar\s+csv(?!.*tudo)/i }, // evita "tudo"
+  ];
+  const all = Array.from(document.querySelectorAll('button, a'));
+  map.forEach(({id, match}) => {
+    if (document.getElementById(id)) return;
+    const el = all.find(e => (e.textContent||'').trim().toLowerCase().match(match));
+    if (el) el.id = id;
+  });
+})();
+
+// 2) Render da tabela (simples)
+function renderRows(list = []) {
+  const tbody = document.querySelector('#tabela-extrato tbody') || document.querySelector('table tbody') || document.querySelector('tbody');
+  if (!tbody) return;
+  tbody.innerHTML = list.map(r => `
+    <tr>
+      <td>${r.id}</td>
+      <td>${(r.data||'').replace('T',' ').slice(0,19)}</td>
+      <td>${r.tipo}</td>
+      <td style="text-align:right">${Number(r.valor||0).toFixed(2)}</td>
+      <td>${r.descricao||''}</td>
+    </tr>
+  `).join('');
+}
+
+// 3) Totais pelos headers
+function updateTotalsFromHeaders(h) {
+  if (!h) return;
+  const get = (k) => h.get(k) || h.get(k.toLowerCase());
+  const set = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v ?? '0,00'; };
+  set('kCredito', get('X-Total-Credito'));
+  set('kDebito',  get('X-Total-Debito'));
+  set('kSaldo',   get('X-Total-Saldo'));
+}
+
+// 4) Execução do extrato (usada pelo botão)
+async function runExtrato() {
+  const base = window.apiBase();  const tok = window.apiToken();
+  if (!base)  { console.warn('[extrato] BASE_URL vazio'); return; }
+  if (!tok)   { console.warn('[extrato] TOKEN vazio');    return; }
+
+  const ledgerId = Number(document.getElementById('ledgerId')?.value)
+                || Number(document.getElementById('ledgerSelect')?.value) || 1;
+
+  const pageSize = Number(document.querySelector('#pageSize')?.value) || 10;
+  const orderDir = (document.querySelector('#orderDir')?.value || 'desc').toLowerCase();
+
+  const qs = new URLSearchParams({ page: '1', page_size: String(pageSize), order_dir: orderDir });
+  const res = await fetch(window.buildLedgerUrl(ledgerId, qs), { headers: { Authorization: 'Bearer ' + tok }});
+  const data = await res.json().catch(() => []);
+  renderRows(data);
+  updateTotalsFromHeaders(res.headers);
+  console.log('[extrato] ok', res.status, res.url);
+}
+
+// 5) Salvar config (BASE_URL/TOKEN) e dar um ping rápido
+async function salvarConfig() {
+  const base = (document.getElementById('BASE_URL')?.value || '').trim();
+  const tok  = (document.getElementById('token')?.value    || '').trim();
+  if (base) localStorage.setItem('BASE_URL', base);
+  if (tok)  localStorage.setItem('TOKEN', tok);
+  console.log('[config] salvo. base=', base, 'tok=', tok ? tok.slice(0,12)+'…' : '(vazio)');
+  // opcional: testa saúde
+  try {
+    const r = await fetch(base.replace(/\/+$/,'') + '/api/v1/health');
+    console.log('[health]', r.status);
+  } catch (e) { console.warn('[health] falhou', e.message); }
+}
+
+// 6) CSV com token
+async function baixarCsv() {
+  const base = window.apiBase();  const tok = window.apiToken();
+  const ledgerId = Number(document.getElementById('ledgerId')?.value)
+                || Number(document.getElementById('ledgerSelect')?.value) || 1;
+  const pageSize = Number(document.querySelector('#pageSize')?.value) || 10;
+  const orderDir = (document.querySelector('#orderDir')?.value || 'desc').toLowerCase();
+  const qs = new URLSearchParams({ page: '1', page_size: String(pageSize), order_dir: orderDir });
+
+  const url = `${base}/api/v1/ledger/${ledgerId}/csv?${qs.toString()}`;
+  const res = await fetch(url, { headers: { Authorization: 'Bearer ' + tok }});
+  if (!res.ok) throw new Error(`CSV ${res.status}`);
+  const blob = await res.blob();
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `extrato_wallet_${ledgerId}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(a.href);
+  console.log('[csv] baixado');
+}
+
+// 7) Binder robusto (remove disabled/pointer-events e cola handler)
+function bindClick(sel, fn) {
+  const el = document.querySelector(sel);
+  if (!el) { console.warn('[bind] não achei', sel); return; }
+  try { el.disabled = false; } catch {}
+  el.style.pointerEvents = 'auto';
+  el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); fn().catch(console.error); });
+  console.log('[bind]', sel, 'ok');
+}
+
+// 8) Liga tudo quando o DOM estiver pronto
+document.addEventListener('DOMContentLoaded', () => {
+  bindClick('#btnSalvar',  salvarConfig);
+  bindClick('#btnAplicar', runExtrato);
+  bindClick('#btnCsv',     baixarCsv);
+});
+
+// 9) Plano B: delegador em CAPTURA (se outro js bloquear)
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('button, a'); if (!el) return;
+  const txt = (el.textContent || '').toLowerCase();
+  if (el.id === 'btnAplicar' || /aplicar\s+filtros/.test(txt)) { e.preventDefault(); e.stopImmediatePropagation(); runExtrato(); }
+  if (el.id === 'btnSalvar'  || /salvar\s+config/.test(txt))   { e.preventDefault(); e.stopImmediatePropagation(); salvarConfig(); }
+  if (el.id === 'btnCsv'     || (/baixar\s+csv/i.test(txt) && !/tudo/i.test(txt))) {
+    e.preventDefault(); e.stopImmediatePropagation(); baixarCsv();
+  }
+}, true); // <== CAPTURA

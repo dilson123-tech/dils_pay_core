@@ -4,52 +4,89 @@
   <meta charset="UTF-8" />
   <title>Extrato Financeiro — v1</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="./style.css">
+  <meta name="theme-color" content="#0ea5e9" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="stylesheet" href="./style.css" />
+
+  <style>
+    .token-row { grid-column: 1 / -1 !important; width: 100%; display: block; }
+    #token { width: 100% !important; min-height: 96px; resize: vertical; box-sizing: border-box; }
+    label[for="token"] { display:block; margin: 8px 0 4px; }
+    .dev-only { display: none !important; }
+    [data-env="dev"] .dev-only { display: block !important; }
+  </style>
+
+  <script>
+    // Define APP_ENV = dev em localhost/127.0.0.1; caso contrário, prod
+    (function () {
+      const stored = localStorage.getItem("APP_ENV");
+      const def = (location.hostname === "localhost" || location.hostname === "127.0.0.1") ? "dev" : "prod";
+      const env = stored || def;
+      document.documentElement.setAttribute("data-env", env);
+      window.APP_ENV = env;
+    })();
+  </script>
 </head>
+
 <body>
   <div class="container">
     <div class="title">
       <span class="pill">Extrato • v1</span>
       <h1>SaaS-like, rápido e sem build</h1>
+      <button id="testConn" type="button">Testar conexão</button>
     </div>
-     <!-- Banner (mensagens de sucesso/erro) -->
+
+    <!-- Banner (mensagens de sucesso/erro) -->
     <div id="banner" class="banner" style="display:none"></div>
 
     <div class="card" id="app">
       <!-- Config -->
       <div class="config">
         <div>
-          <label>BASE_URL</label>
-          <input id="baseUrl" placeholder="ex.: http://127.0.0.1:8000" />
+          <label for="BASE_URL">BASE_URL</label>
+          <input id="BASE_URL" type="text" value="http://192.168.1.14:8000" placeholder="http://192.168.1.14:8000" />
+          
+          <label for="token">
+            Token (JWT)
+            <small id="tokenTTL" style="opacity:.8;margin-left:6px"></small>
+          </label>
+          <textarea id="token" rows="4" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false"
+            placeholder="Cole aqui seu JWT (ou clique Entrar/Token DEV)"></textarea>
+
+          <button id="btnRefresh" class="ghost" type="button" title="Gerar novo access via refresh">Renovar token</button>
+
+          <!-- Login -->
+          <div class="login-box" style="margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap">
+            <input id="loginUser" type="text" placeholder="usuario ou email" style="padding:6px; min-width:200px">
+            <input id="loginPass" type="password" placeholder="senha" style="padding:6px; min-width:160px">
+            <button id="btnLogin"  type="button">Entrar</button>
+            <button id="btnLogout" type="button" class="ghost">Sair</button>
+            <button id="btnLoginDev" class="dev-only" type="button" title="Só DEV">Token DEV</button>
+          </div>
         </div>
+
         <div>
-          <label>Token (Bearer)</label>
-          <input id="token" placeholder="Cole o token aqui" />
+          <label for="ledgerSelect">Ledger</label>
+          <select id="ledgerSelect"></select>
+          <small style="display:block;opacity:.7">ou digite:</small>
+          <input id="ledgerId" type="number" min="1" value="1" />
         </div>
-        <div>
-     <div>
-       <label>Ledger</label>
-       <select id="ledgerSelect"></select>
-       <small style="display:block;opacity:.7">ou digite:</small>
-       <input id="ledgerId" type="number" min="1" value="1" />
-     </div>
 
         <div class="actions">
-          <button id="saveCfg">Salvar Config</button>
-          <button class="ghost" id="clearCfg" title="Limpar config">Limpar</button>
-          <button class="ghost" id="reloadLedgers" title="Recarregar lista de ledgers">Atualizar lista</button>
-     
-   </div>
+          <button id="saveCfg" type="button">Salvar Config</button>
+          <button class="ghost" id="clearCfg" type="button" title="Limpar config">Limpar</button>
+          <button class="ghost" id="reloadLedgers" type="button" title="Recarregar lista de ledgers">Atualizar lista</button>
+        </div>
       </div>
 
       <!-- Filtros -->
       <div class="controls">
         <div class="row">
-          <div><label>Data inicial</label><input type="date" id="dataIni" /></div>
-          <div><label>Data final</label><input type="date" id="dataFim" /></div>
+          <div><label for="dataIni">Data inicial</label><input type="date" id="dataIni" /></div>
+          <div><label for="dataFim">Data final</label><input type="date" id="dataFim" /></div>
 
           <div>
-            <label>Tipo</label>
+            <label for="tipo">Tipo</label>
             <select id="tipo">
               <option value="">Todos</option>
               <option value="CREDITO">Crédito</option>
@@ -58,7 +95,7 @@
           </div>
 
           <div>
-            <label>Itens por página</label>
+            <label for="pageSize">Itens por página</label>
             <select id="pageSize">
               <option>5</option>
               <option selected>10</option>
@@ -70,16 +107,21 @@
 
         <!-- Presets de data -->
         <div class="chips" id="presetChips" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-          <button class="chip" id="presetHoje">Hoje</button>
-          <button class="chip" id="preset7">Últimos 7d</button>
-          <button class="chip" id="preset30">Últimos 30d</button>
-          <button class="chip ghost" id="presetMes">Este mês</button>
-          <button class="chip secondary" id="presetLimpar">Limpar datas</button>
+          <button class="chip" id="presetHoje" type="button">Hoje</button>
+          <button class="chip" id="preset7"   type="button">Últimos 7d</button>
+          <button class="chip" id="preset30"  type="button">Últimos 30d</button>
+          <button class="chip ghost"    id="presetMes"    type="button">Este mês</button>
+          <button class="chip secondary" id="presetLimpar" type="button">Limpar datas</button>
         </div>
 
         <div class="filter-actions">
-          <button id="aplicar">Aplicar filtros</button>
-          <button class="secondary" id="limpar">Limpar</button>
+          <button id="aplicar" type="button">Aplicar filtros</button>
+          <div class="export-actions" style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+            <button id="btnCsvPagina" type="button">Baixar CSV</button>
+            <button id="btnCsvTudo"   type="button">Baixar CSV (Tudo)</button>
+          </div>
+
+          <button class="secondary" id="limpar" type="button">Limpar</button>
           <div class="badges" id="statusBadges"></div>
         </div>
       </div>
@@ -103,29 +145,28 @@
       <!-- Rodapé -->
       <div class="footer">
         <div class="btns">
-          <button class="secondary" id="prev">&larr; Anterior</button>
+          <button class="secondary" id="prev" type="button">&larr; Anterior</button>
           <span class="pill" id="pageInfo">Pág. 1 de 1</span>
-          <button class="secondary" id="next">Próxima &rarr;</button>
-          <button id="baixarCSV">Baixar CSV</button>
-          <button id="baixarCSVAll" class="secondary">Baixar CSV (Tudo)</button>
+          <button class="secondary" id="next" type="button">Próxima &rarr;</button>
+          <button id="baixarCSV"    type="button">Baixar CSV</button>
+          <button id="baixarCSVAll" type="button" class="secondary">Baixar CSV (Tudo)</button>
         </div>
 
         <div class="totals">
-          <span class="badge ok" id="tCred">Crédito: R$ 0,00</span>
-          <span class="badge bad" id="tDeb">Débito: R$ 0,00</span>
+          <span class="badge ok"    id="tCred">Crédito: R$ 0,00</span>
+          <span class="badge bad"   id="tDeb">Débito: R$ 0,00</span>
           <span class="badge saldo" id="tSaldo">Saldo: R$ 0,00</span>
         </div>
       </div>
 
-      <div class="hint">
+        <div class="hint">
         Dica: se o backend não mandar <code>X-Total-*</code>, os totalizadores somam apenas a <b>página atual</b>.
       </div>
-    </div><!-- card -->
-  </div><!-- container -->
+    </div><!-- /card -->
+  </div><!-- /container -->
 
- 
-  <!-- força pegar a versão nova do JS -->
-  <script src="extrato.js?v=13"></script>
-
+  <!-- Carrega o JS com defer (apenas UMA tag) -->
+  <script src="./js/extrato.js?v=63" defer></script>
 </body>
 </html>
+   

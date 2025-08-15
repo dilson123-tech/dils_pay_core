@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Extrato Financeiro — v1</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="./style.css">
+</head>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#0ea5e9">
+
+<body>
+  <div class="container">
+    <div class="title">
+      <span class="pill">Extrato • v1</span>
+      <h1>SaaS-like, rápido e sem build</h1>
+    </div>
+     <!-- Banner (mensagens de sucesso/erro) -->
+    <div id="banner" class="banner" style="display:none"></div>
+
+    <div class="card" id="app">
+      <!-- Config -->
+      <div class="config">
+        <div>
+          <label>BASE_URL</label>
+          <input id="baseUrl" placeholder="ex.: http://127.0.0.1:8000" />
+        </div>
+        <div>
+          <label>Token (Bearer)</label>
+          <input id="token" placeholder="Cole o token aqui" />
+        </div>
+        <div>
+     <div>
+       <label>Ledger</label>
+       <select id="ledgerSelect"></select>
+       <small style="display:block;opacity:.7">ou digite:</small>
+       <input id="ledgerId" type="number" min="1" value="1" />
+     </div>
+
+        <div class="actions">
+          <button id="saveCfg">Salvar Config</button>
+          <button class="ghost" id="clearCfg" title="Limpar config">Limpar</button>
+          <button class="ghost" id="reloadLedgers" title="Recarregar lista de ledgers">Atualizar lista</button>
+     
+   </div>
+      </div>
+
+      <!-- Filtros -->
+      <div class="controls">
+        <div class="row">
+          <div><label>Data inicial</label><input type="date" id="dataIni" /></div>
+          <div><label>Data final</label><input type="date" id="dataFim" /></div>
+
+          <div>
+            <label>Tipo</label>
+            <select id="tipo">
+              <option value="">Todos</option>
+              <option value="CREDITO">Crédito</option>
+              <option value="DEBITO">Débito</option>
+            </select>
+          </div>
+
+          <div>
+            <label>Itens por página</label>
+            <select id="pageSize">
+              <option>5</option>
+              <option selected>10</option>
+              <option>20</option>
+              <option>50</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Presets de data -->
+        <div class="chips" id="presetChips" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+          <button class="chip" id="presetHoje">Hoje</button>
+          <button class="chip" id="preset7">Últimos 7d</button>
+          <button class="chip" id="preset30">Últimos 30d</button>
+          <button class="chip ghost" id="presetMes">Este mês</button>
+          <button class="chip secondary" id="presetLimpar">Limpar datas</button>
+        </div>
+
+        <div class="filter-actions">
+          <button id="aplicar">Aplicar filtros</button>
+          <button class="secondary" id="limpar">Limpar</button>
+          <div class="badges" id="statusBadges"></div>
+        </div>
+      </div>
+
+      <!-- Tabela -->
+      <div class="table-wrap">
+        <table id="tabela">
+          <thead>
+            <tr>
+              <th class="sortable" data-key="id">ID</th>
+              <th class="sortable" data-key="data">Data/Hora</th>
+              <th class="sortable" data-key="tipo">Tipo</th>
+              <th class="sortable right" data-key="valor">Valor (R$)</th>
+              <th class="sortable" data-key="descricao">Descrição</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+
+      <!-- Rodapé -->
+      <div class="footer">
+        <div class="btns">
+          <button class="secondary" id="prev">&larr; Anterior</button>
+          <span class="pill" id="pageInfo">Pág. 1 de 1</span>
+          <button class="secondary" id="next">Próxima &rarr;</button>
+          <button id="baixarCSV">Baixar CSV</button>
+          <button id="baixarCSVAll" class="secondary">Baixar CSV (Tudo)</button>
+        </div>
+
+        <div class="totals">
+          <span class="badge ok" id="tCred">Crédito: R$ 0,00</span>
+          <span class="badge bad" id="tDeb">Débito: R$ 0,00</span>
+          <span class="badge saldo" id="tSaldo">Saldo: R$ 0,00</span>
+        </div>
+      </div>
+
+      <div class="hint">
+        Dica: se o backend não mandar <code>X-Total-*</code>, os totalizadores somam apenas a <b>página atual</b>.
+      </div>
+    </div><!-- card -->
+  </div><!-- container -->
+
+ 
+  <!-- força pegar a versão nova do JS -->
+  <script src="extrato.js?v=14"></script>
+
+<script>
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js").catch(console.error);
+  }
+</script>
+
+
+<script>
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("./sw.js").catch(console.error);
+  }
+</script>
+</body>
+</html>
