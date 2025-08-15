@@ -180,22 +180,22 @@ function renderSkeletonRows(n = state.pageSize || 10) {
   }
 }
 
+function normalizeRow(it) {
+  if (!it || typeof it !== "object") return { id: "", data: "", tipo: "", valor: 0, descricao: "" };
 
-function normalizeRow(it){
-  if (!it || typeof it !== "object") return { id:"", data:"", tipo:"", valor:0, descricao:"" };
+  const id = it.id ?? it.tx_id ?? it.transaction_id ?? it.uuid ?? it.numero ?? it.seq ?? "";
 
-  const id =
-    it.id ?? it.tx_id ?? it.transaction_id ?? it.uuid ?? it.numero ?? it.seq ?? "";
-
-  const dataRaw =
-    it.data ?? it.created_at ?? it.timestamp ?? it.dt ?? it.date ?? "";
+  const dataRaw = it.data ?? it.created_at ?? it.timestamp ?? it.dt ?? it.date ?? "";
   const data = dataRaw ? new Date(String(dataRaw).replace(" ", "T")) : "";
 
   const tipoRaw = (it.tipo ?? it.type ?? it.kind ?? "").toString().toUpperCase();
 
   let valor =
-    it.valor ?? it.amount ?? it.value ?? it.total ??
-    (("valor_centavos" in it) ? (Number(it.valor_centavos)||0)/100 : 0);
+    it.valor ??
+    it.amount ??
+    it.value ??
+    it.total ??
+    ("valor_centavos" in it ? (Number(it.valor_centavos) || 0) / 100 : 0);
 
   if (typeof valor === "string") valor = Number(valor.replace(",", "."));
   if (Number.isNaN(valor)) valor = 0;
@@ -203,15 +203,14 @@ function normalizeRow(it){
   let tipo = tipoRaw || (Number(valor) < 0 ? "DEBITO" : "CREDITO");
   if (tipo === "DEBITO" && valor > 0 && (it.sign === "-" || it.debito === true)) valor = -valor;
 
-  const descricao =
-    it.descricao ?? it.description ?? it.memo ?? it.obs ?? it.note ?? "";
+  const descricao = it.descricao ?? it.description ?? it.memo ?? it.obs ?? it.note ?? "";
 
   return {
     id,
-    data: data && !isNaN(data) ? data.toISOString() : (dataRaw || ""),
+    data: data && !isNaN(data) ? data.toISOString() : dataRaw || "",
     tipo,
     valor: Number(valor),
-    descricao: String(descricao || "")
+    descricao: String(descricao || ""),
   };
 }
 
@@ -221,7 +220,6 @@ function renderRows(items) {
   tb.innerHTML = "";
 
   const rows = (items || []).map(normalizeRow);
-
 
   if (!rows.length) {
     const tr = document.createElement("tr");
@@ -351,12 +349,10 @@ async function fetchLedgers() {
     sel.value = wanted;
     if ($("ledgerId")) $("ledgerId").value = sel.value;
     return data;
-    } catch (e) {
-      showBanner("Falha ao carregar ledgers: " + (e && e.message ? e.message : e), "error");
-      return [];
-    }
-
-
+  } catch (e) {
+    showBanner("Falha ao carregar ledgers: " + (e && e.message ? e.message : e), "error");
+    return [];
+  }
 }
 
 async function fetchAndRender() {
