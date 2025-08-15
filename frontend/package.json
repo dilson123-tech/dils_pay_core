@@ -1,0 +1,19 @@
+{
+  "scripts": {
+    "lint": "eslint . --max-warnings=0",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier -w .",
+    "check:html": "html-validate **/*.html",
+    "check:spell": "cspell \"**/*.{js,html,css,md}\"",
+    "check": "npm run lint && npm run check:html && npm run check:spell",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{js,css,html,json,md}": [
+      "prettier -w",
+      "eslint --fix --max-warnings=0",
+      "cspell --no-progress --no-summary"
+    ]
+  },
+  "type": "module"
+}
