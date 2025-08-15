@@ -219,7 +219,22 @@ function renderRows(items) {
   if (!tb) return;
   tb.innerHTML = "";
 
-  const rows = (items || []).map(normalizeRow);
+  let rows = (items || []).map(normalizeRow);
+  // validação (Zod): filtra linhas inválidas sem quebrar a UI
+  try {
+    const Z = window.Schemas?.NormalizedRow;
+    if (Z) {
+      const ok = [];
+      for (const r of rows) {
+        const res = Z.safeParse(r);
+        if (res.success) ok.push(res.data);
+        else console.warn("[zod] linha inválida descartada:", res.error?.errors, r);
+      }
+      rows = ok;
+    }
+  } catch (err) {
+    console.warn("[zod] validação desativada:", err);
+  }
 
   if (!rows.length) {
     const tr = document.createElement("tr");
@@ -849,6 +864,17 @@ function wireUI() {
   });
 
   // CSV local/servidor
+  // CSV formato (BR/US)
+  (function () {
+    const csvSel = $("csvStyle");
+    if (!csvSel) return;
+    csvSel.value = localStorage.getItem("CSV_STYLE") || "br";
+    csvSel.addEventListener("change", () => {
+      const v = csvSel.value === "us" ? "us" : "br";
+      localStorage.setItem("CSV_STYLE", v);
+      showBanner(`Formato CSV: ${v.toUpperCase()}`, "ok");
+    });
+  })();
   $("baixarCSV")?.addEventListener("click", () => baixarCSV("page")); // local (página)
   $("baixarCSVAll")?.addEventListener("click", () => baixarCSV("all")); // servidor (tudo)
   $("btnCsvPagina")?.addEventListener("click", (e) => {
