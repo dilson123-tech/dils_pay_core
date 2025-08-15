@@ -1,47 +1,21 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.pytest_cache/
-.mypy_cache/
+# deps
+**/node_modules/
 
-# Virtualenv
-backend/venv/
-.env
-*.env
+# builds
+**/dist/
+**/build/
+**/.cache/
 
-# DBs / artefatos locais
-backend/dev.db
-*.sqlite
-*.sqlite3
-
-# Editor/OS
-.vscode/
-.idea/
-.DS_Store
-
-# Front/output
-frontend/*.csv
+# logs
 *.log
+npm-debug.log*
+yarn-*.log
 
-# Docker
-*.pid
-# venv
-.venv/
-venv/
+# OS
+.DS_Store
+Thumbs.db
 
-# arquivos locais/temporários
+# env
 .env
-backend/dev.db
-frontend/*.csv
-backend/app/api/v1/routes/*.bak_*
-# venv
-.venv/
-venv/
-
-# arquivos locais/temporários
-.env
-backend/dev.db
-frontend/*.csv
-backend/app/api/v1/routes/*.bak_*
+.env.*
+coverage/
