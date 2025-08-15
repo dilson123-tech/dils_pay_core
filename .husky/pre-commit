@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+echo "🔧 pre-commit: lint-staged (frontend prefix, cwd=repo)"
+npm --prefix frontend exec lint-staged -- \
+  --config ./frontend/package.json \
+  --cwd ./frontend \
+  --relative \
+  --allow-empty || exit 1
+
+echo "🧪 vitest (frontend)"
+npm --prefix frontend test --silent || exit 1

@@ -66,12 +66,9 @@
               type="text"
               value="http://192.168.1.14:8000"
               placeholder="http://192.168.1.14:8000"
->
+            >
 
-            <label for="token">
-              Token (JWT)
-              <small id="tokenTTL" class="muted ml6"></small>
-            </label>
+            <label for="token">Token (JWT) <small id="tokenTTL" class="muted ml6"></small></label>
             <textarea
               id="token"
               rows="4"
@@ -92,22 +89,14 @@
             </button>
 
             <!-- Login -->
-            <div
-              class="login-box"
-              
-            >
+            <div class="login-box">
               <input
                 id="loginUser"
                 type="text"
                 placeholder="usuario ou email"
                 class="pad6 minw200"
->
-              <input
-                id="loginPass"
-                type="password"
-                placeholder="senha"
-                class="pad6 minw160"
->
+              >
+              <input id="loginPass" type="password" placeholder="senha" class="pad6 minw160" >
               <button id="btnLogin" type="button">Entrar</button>
               <button id="btnLogout" type="button" class="ghost">Sair</button>
               <button id="btnLoginDev" class="dev-only" type="button" title="Só DEV">
@@ -164,76 +153,78 @@
           </div>
 
           <!-- Presets de data -->
-          <div
-            class="chips"
-            id="presetChips"
-            
-          >
+          <div class="chips" id="presetChips">
             <button class="chip" id="presetHoje" type="button">Hoje</button>
             <button class="chip" id="preset7" type="button">Últimos 7d</button>
             <button class="chip" id="preset30" type="button">Últimos 30d</button>
             <button class="chip ghost" id="presetMes" type="button">Este mês</button>
-            <button class="chip secondary" id="presetLimpar" type="button">Limpar datas</button>
           </div>
 
           <div class="filter-actions">
             <button id="aplicar" type="button">Aplicar filtros</button>
-            <div
-              class="export-actions"
-              
-            >
+            <div class="export-actions">
               <button id="btnCsvPagina" type="button">Baixar CSV</button>
               <button id="btnCsvTudo" type="button">Baixar CSV (Tudo)</button>
             </div>
-
-            <button class="secondary" id="limpar" type="button">Limpar</button>
-            <div class="badges" id="statusBadges"></div>
-          </div>
-        </div>
-
-        <!-- Tabela -->
-        <div class="table-wrap">
-          <table id="tabela">
-            <thead>
-              <tr>
-                <th class="sortable" data-key="id">ID</th>
-                <th class="sortable" data-key="data">Data/Hora</th>
-                <th class="sortable" data-key="tipo">Tipo</th>
-                <th class="sortable right" data-key="valor">Valor (R$)</th>
-                <th class="sortable" data-key="descricao">Descrição</th>
-              </tr>
-            </thead>
-            <tbody id="tbody"></tbody>
-          </table>
-        </div>
-
-        <!-- Rodapé -->
-        <div class="footer">
-          <div class="btns">
-            <button class="secondary" id="prev" type="button">&larr; Anterior</button>
-            <span class="pill" id="pageInfo">Pág. 1 de 1</span>
-            <button class="secondary" id="next" type="button">Próxima &rarr;</button>
-            <button id="baixarCSV" type="button">Baixar CSV</button>
-            <button id="baixarCSVAll" type="button" class="secondary">Baixar CSV (Tudo)</button>
           </div>
 
-          <div class="totals">
-            <span class="badge ok" id="tCred">Crédito: R$ 0,00</span>
-            <span class="badge bad" id="tDeb">Débito: R$ 0,00</span>
-            <span class="badge saldo" id="tSaldo">Saldo: R$ 0,00</span>
-          </div>
-        </div>
-
-        <div class="hint">
-          Dica: se o backend não mandar <code>X-Total-*</code>, os totalizadores somam apenas a
-          <b>página atual</b>.
+          <button class="secondary" id="limpar" type="button">Limpar</button>
+          <div class="badges" id="statusBadges"></div>
         </div>
       </div>
-      <!-- /card -->
+
+      <!-- Tabela -->
+      <div class="table-wrap">
+        <table id="tabela">
+          <thead>
+            <tr>
+              <th class="sortable" data-key="id">ID</th>
+              <th class="sortable" data-key="data">Data/Hora</th>
+              <th class="sortable" data-key="tipo">Tipo</th>
+              <th class="sortable right" data-key="valor">Valor (R$)</th>
+              <th class="sortable" data-key="descricao">Descrição</th>
+            </tr>
+          </thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+
+      <!-- Rodapé -->
+      <div class="footer">
+        <div class="btns">
+          <button class="secondary" id="prev" type="button">&larr; Anterior</button>
+          <span class="pill" id="pageInfo">Pág. 1 de 1</span>
+          <button class="secondary" id="next" type="button">Próxima &rarr;</button>
+          <button id="baixarCSV" type="button">Baixar CSV</button>
+          <button id="baixarCSVAll" type="button" class="secondary">Baixar CSV (Tudo)</button>
+        </div>
+
+        <div class="totals">
+          <span class="badge ok" id="tCred">Crédito: R$ 0,00</span>
+          <span class="badge bad" id="tDeb">Débito: R$ 0,00</span>
+          <span class="badge saldo" id="tSaldo">Saldo: R$ 0,00</span>
+        </div>
+      </div>
+
+      <div class="hint">
+        Dica: se o backend não mandar <code>X-Total-*</code>, os totalizadores somam apenas a
+        <b>página atual</b>.
+      </div>
     </div>
+    <!-- /card -->
     <!-- /container -->
 
     <!-- scripts -->
+    <script type="module">
+      import { normalizeRow as _nr } from "./src/normalizeRow.js";
+      window.normalizeRow = _nr;
+    </script>
+    <script type="module" src="./src/schemas.js"></script>
     <script src="./extrato.js?v=65" defer></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("./sw.js");
+      }
+    </script>
   </body>
 </html>

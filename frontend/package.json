@@ -6,14 +6,44 @@
     "check:html": "html-validate **/*.html",
     "check:spell": "cspell \"**/*.{js,html,css,md}\"",
     "check": "npm run lint && npm run check:html && npm run check:spell",
-    "prepare": "husky"
+    "prepare": "husky",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "lint-staged": {
-    "*.{js,css,html,json,md}": [
-      "prettier -w",
-      "eslint --fix --max-warnings=0",
+    "**/*.js": [
+      "eslint --fix --max-warnings=0 --no-warn-ignored",
       "cspell --no-progress --no-summary"
+    ],
+    "**/*.html": [
+      "html-validate",
+      "cspell --no-progress --no-summary"
+    ],
+    "**/*.{css,md}": [
+      "cspell --no-progress --no-summary"
+    ],
+    "**/*": [
+      "prettier -w --ignore-unknown"
     ]
   },
-  "type": "module"
+  "type": "module",
+  "devDependencies": {
+    "@eslint/js": "^9.33.0",
+    "cspell": "^9.2.0",
+    "eslint": "^9.33.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-import": "^2.32.0",
+    "eslint-plugin-n": "^17.21.3",
+    "eslint-plugin-promise": "^7.2.1",
+    "eslint-plugin-security": "^3.0.1",
+    "eslint-plugin-sonarjs": "^3.0.4",
+    "globals": "^16.3.0",
+    "html-validate": "^10.0.0",
+    "lint-staged": "^16.1.5",
+    "prettier": "^3.6.2",
+    "vitest": "^3.2.4"
+  },
+  "dependencies": {
+    "zod": "^4.0.17"
+  }
 }
