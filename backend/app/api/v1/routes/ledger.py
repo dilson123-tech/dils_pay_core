@@ -1,15 +1,18 @@
 # app/api/v1/routes/ledger.py
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, Query, Response, HTTPException
-from fastapi.responses import Response as FastAPIResponse
-from sqlalchemy.orm import Session
-from sqlalchemy import func, case, asc, desc
-from typing import Literal, Optional
+import csv
+import io
 from datetime import datetime
-import io, csv
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import Response as FastAPIResponse
+from sqlalchemy import asc, case, desc, func
+from sqlalchemy.orm import Session
 
 from app.database.session import get_db
+
 try:
     from app.models.transaction import Transaction as TM  # modelo "principal"
 except Exception:
@@ -23,22 +26,27 @@ WALLET_COL = (
     or getattr(TM, "ledger_id", None)
     or getattr(TM, "conta_id", None)
 )
-DATE_COL = getattr(TM, "criado_em", getattr(TM, "data", getattr(TM, "created_at", TM.id)))
-DESC_COL = getattr(TM, "referencia", getattr(TM, "descricao", getattr(TM, "memo", TM.id)))
+DATE_COL = getattr(
+    TM, "criado_em", getattr(TM, "data", getattr(TM, "created_at", TM.id))
+)
+DESC_COL = getattr(
+    TM, "referencia", getattr(TM, "descricao", getattr(TM, "memo", TM.id))
+)
 TIPO_COL = getattr(TM, "tipo", getattr(TM, "natureza", TM.id))
 VALOR_COL = getattr(TM, "valor", getattr(TM, "amount", TM.id))
 
 TipoMov = Literal["CREDITO", "DEBITO"]
 
 ORDER_MAP = {
-    "id":        getattr(TM, "id", TM),
-    "data":      DATE_COL,
-    "tipo":      TIPO_COL,
-    "valor":     VALOR_COL,
+    "id": getattr(TM, "id", TM),
+    "data": DATE_COL,
+    "tipo": TIPO_COL,
+    "valor": VALOR_COL,
     "descricao": DESC_COL,
 }
 
-def _parse_dt(x: Optional[str], end_of_day: bool = False):
+
+def _parse_dt(x: str | None, end_of_day: bool = False):
     if not x:
         return None
     x = x.strip()
@@ -49,6 +57,7 @@ def _parse_dt(x: Optional[str], end_of_day: bool = False):
     except Exception:
         # como fallback, retorna string (SQLite aceita ISO-like em comparação)
         return x
+
 
 def _get_attr(obj, col):
     if hasattr(col, "key"):
@@ -61,6 +70,7 @@ def _get_attr(obj, col):
             return getattr(obj, name)
     return None
 
+
 def _fmt_dt(v):
     if v is None:
         return ""
@@ -71,6 +81,7 @@ def _fmt_dt(v):
     except Exception:
         return str(v)
 
+
 # ========= JSON (paginado) =========
 @router.get("/ledger/{ledger_id}")
 def get_ledger(
@@ -78,9 +89,9 @@ def get_ledger(
     response: Response,
     page: int = Query(1, ge=1),
     page_size: int = Query(10, ge=1, le=200),
-    tipo: Optional[TipoMov] = Query(default=None),
-    start: Optional[str] = None,
-    end: Optional[str] = None,
+    tipo: TipoMov | None = Query(default=None),
+    start: str | None = None,
+    end: str | None = None,
     order_by: str = Query("data"),
     order_dir: Literal["asc", "desc"] = Query("desc"),
     db: Session = Depends(get_db),
@@ -88,18 +99,23 @@ def get_ledger(
     if WALLET_COL is None:
         raise HTTPException(500, "Modelo de transação não tem coluna wallet/ledger id")
 
-    q = db.query(TM).filter(WALLET_COL == ledger_id)
+    # base query
+    q = db.query(TM).filter(ledger_id == WALLET_COL)
+
+    # filtro por tipo (se veio)
     if tipo:
-        q = q.filter(TIPO_COL == tipo)
+        q = q.filter(tipo == TIPO_COL)
+
+    # datas (precisa calcular antes de usar nos filtros)
     ds, de = _parse_dt(start, False), _parse_dt(end, True)
     if ds is not None:
-        q = q.filter(DATE_COL >= ds)
+        q = q.filter(ds <= DATE_COL)
     if de is not None:
-        q = q.filter(DATE_COL <= de)
+        q = q.filter(de >= DATE_COL)
 
     # totais globais
     subq = q.with_entities(
-        getattr(TM, "id").label("id"),
+        TM.id.label("id"),
         DATE_COL.label("data"),
         TIPO_COL.label("tipo"),
         VALOR_COL.label("valor"),
@@ -108,13 +124,17 @@ def get_ledger(
 
     total_count = db.query(func.count()).select_from(subq).scalar() or 0
     tot_credito, tot_debito = db.query(
-        func.coalesce(func.sum(case((subq.c.tipo == "CREDITO", subq.c.valor), else_=0.0)), 0.0),
-        func.coalesce(func.sum(case((subq.c.tipo == "DEBITO",  subq.c.valor), else_=0.0)), 0.0),
+        func.coalesce(
+            func.sum(case((subq.c.tipo == "CREDITO", subq.c.valor), else_=0.0)), 0.0
+        ),
+        func.coalesce(
+            func.sum(case((subq.c.tipo == "DEBITO", subq.c.valor), else_=0.0)), 0.0
+        ),
     ).one()
 
     tot_credito = float(tot_credito or 0.0)
-    tot_debito  = float(tot_debito  or 0.0)
-    saldo       = tot_credito - tot_debito
+    tot_debito = float(tot_debito or 0.0)
+    saldo = tot_credito - tot_debito
 
     # ordenação + paginação
     col = ORDER_MAP.get(order_by, DATE_COL)
@@ -123,14 +143,14 @@ def get_ledger(
 
     # headers
     total_pages = max(1, (total_count + page_size - 1) // page_size)
-    response.headers["X-Total"]         = str(total_count)
-    response.headers["X-Total-Count"]   = str(total_count)
-    response.headers["X-Total-Pages"]   = str(total_pages)
-    response.headers["X-Page"]          = str(page)
-    response.headers["X-Page-Size"]     = str(page_size)
+    response.headers["X-Total"] = str(total_count)
+    response.headers["X-Total-Count"] = str(total_count)
+    response.headers["X-Total-Pages"] = str(total_pages)
+    response.headers["X-Page"] = str(page)
+    response.headers["X-Page-Size"] = str(page_size)
     response.headers["X-Total-Credito"] = f"{tot_credito:.2f}"
-    response.headers["X-Total-Debito"]  = f"{tot_debito:.2f}"
-    response.headers["X-Total-Saldo"]   = f"{saldo:.2f}"
+    response.headers["X-Total-Debito"] = f"{tot_debito:.2f}"
+    response.headers["X-Total-Saldo"] = f"{saldo:.2f}"
 
     # corpo
     out = []
@@ -139,14 +159,19 @@ def get_ledger(
         desc_txt = getattr(it, getattr(DESC_COL, "key", "referencia"), None)
         if desc_txt is None:
             desc_txt = getattr(it, "descricao", "") or ""
-        out.append({
-            "id": getattr(it, "id", None),
-            "data": _fmt_dt(dt),
-            "tipo": getattr(it, getattr(TIPO_COL, "key", "tipo"), ""),
-            "valor": float(getattr(it, getattr(VALOR_COL, "key", "valor"), 0.0) or 0.0),
-            "descricao": desc_txt,
-        })
+        out.append(
+            {
+                "id": getattr(it, "id", None),
+                "data": _fmt_dt(dt),
+                "tipo": getattr(it, getattr(TIPO_COL, "key", "tipo"), ""),
+                "valor": float(
+                    getattr(it, getattr(VALOR_COL, "key", "valor"), 0.0) or 0.0
+                ),
+                "descricao": desc_txt,
+            }
+        )
     return out
+
 
 # ========= CSV (não streaming) =========
 @router.get("/ledger/{wallet_id}/csv")
@@ -157,7 +182,7 @@ def ledger_csv(
     end: str | None = None,
     order_by: str = "data",
     order_dir: str = "desc",
-    csv_sep: str = ";",          # ";" BR | "," US
+    csv_sep: str = ";",  # ";" BR | "," US
     csv_decimal: str = "comma",  # "comma" BR | "dot" US
     filename: str | None = None,
     db: Session = Depends(get_db),
@@ -165,15 +190,15 @@ def ledger_csv(
     if WALLET_COL is None:
         raise HTTPException(500, "Modelo de transação não tem coluna wallet/ledger id")
 
-    q = db.query(TM).filter(WALLET_COL == wallet_id)
+    q = db.query(TM).filter(wallet_id == WALLET_COL)
     if tipo in ("CREDITO", "DEBITO"):
-        q = q.filter(TIPO_COL == tipo)
+        q = q.filter(tipo == TIPO_COL)
 
     ds, de = _parse_dt(start, False), _parse_dt(end, True)
     if ds is not None:
-        q = q.filter(DATE_COL >= ds)
+        q = q.filter(ds <= DATE_COL)
     if de is not None:
-        q = q.filter(DATE_COL <= de)
+        q = q.filter(de >= DATE_COL)
 
     col = ORDER_MAP.get(order_by, DATE_COL)
     q = q.order_by(desc(col) if order_dir.lower() == "desc" else asc(col))
@@ -181,7 +206,7 @@ def ledger_csv(
     rows = q.all()  # materializa (evita sessão fechar no meio)
 
     sep = "," if csv_sep == "," else ";"
-    use_comma = (csv_decimal.lower() != "dot")  # default BR
+    use_comma = csv_decimal.lower() != "dot"  # default BR
 
     buf = io.StringIO()
     w = csv.writer(buf, delimiter=sep, quoting=csv.QUOTE_MINIMAL)
@@ -195,15 +220,87 @@ def ledger_csv(
         desc_txt = getattr(t, getattr(DESC_COL, "key", "referencia"), None)
         if desc_txt is None:
             desc_txt = getattr(t, "descricao", "") or ""
-        w.writerow([
-            getattr(t, "id", ""),
-            _fmt_dt(dt),
-            getattr(t, getattr(TIPO_COL, "key", "tipo"), "") or "",
-            val,
-            (desc_txt or "").replace("\n", " "),
-        ])
+        w.writerow(
+            [
+                getattr(t, "id", ""),
+                _fmt_dt(dt),
+                getattr(t, getattr(TIPO_COL, "key", "tipo"), "") or "",
+                val,
+                (desc_txt or "").replace("\n", " "),
+            ]
+        )
 
     data = buf.getvalue().encode("utf-8")
     name = filename or f"extrato_wallet_{wallet_id}.csv"
     headers = {"Content-Disposition": f'attachment; filename="{name}"'}
-    return FastAPIResponse(content=data, media_type="text/csv; charset=utf-8", headers=headers)
+    return FastAPIResponse(
+        content=data, media_type="text/csv; charset=utf-8", headers=headers
+    )
+
+
+# ==================== [ TOTAIS DO EXTRATO – HELPER ] ====================
+# (pode ficar no final do arquivo)
+
+
+def _set_totais_headers(
+    db: Session, wallet_id: int, response: Response, dt_ini=None, dt_fim=None
+) -> None:
+    """
+    Calcula totais (CREDITO, DEBITO, SALDO) para a carteira e envia nos headers:
+      - X-Total-Credito
+      - X-Total-Debito
+      - X-Total-Saldo
+    """
+    q = db.query(
+        func.coalesce(
+            func.sum(case((TM.tipo == "CREDITO", TM.valor), else_=0)), 0
+        ).label("credito"),
+        func.coalesce(
+            func.sum(case((TM.tipo == "DEBITO", TM.valor), else_=0)), 0
+        ).label("debito"),
+    ).filter(TM.wallet_id == wallet_id)
+
+    if dt_ini is not None:
+        q = q.filter(TM.criado_em >= dt_ini)
+    if dt_fim is not None:
+        q = q.filter(TM.criado_em <= dt_fim)
+
+    r = q.one()
+    credito = float(r.credito or 0)
+    debito = float(r.debito or 0)
+    saldo = credito - debito
+
+    response.headers["X-Total-Credito"] = f"{credito:.2f}"
+    response.headers["X-Total-Debito"] = f"{debito:.2f}"
+    response.headers["X-Total-Saldo"] = f"{saldo:.2f}"
+
+
+# =======================================================================
+@router.get("/ledger/{ledger_id}/export")
+def export_ledger_csv(ledger_id: int, db: Session = Depends(get_db)):
+    # imports locais pra não mexer no topo do arquivo
+    import csv
+    import io
+
+    from fastapi.responses import StreamingResponse
+
+    # Busca transações da carteira
+    rows = db.query(TM).filter(ledger_id == WALLET_COL).order_by(DATE_COL.desc()).all()
+
+    # Monta CSV em memória
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["ID", "Data", "Descrição", "Tipo", "Valor"])
+    for r in rows:
+        data = getattr(r, "criado_em", getattr(r, "data", None))
+        desc = getattr(r, "referencia", getattr(r, "descricao", getattr(r, "memo", "")))
+        tipo = getattr(r, "tipo", getattr(r, "kind", ""))
+        valor = getattr(r, "valor", getattr(r, "amount", 0))
+        w.writerow([r.id, data, desc, tipo, valor])
+
+    buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename=ledger_{ledger_id}.csv"},
+    )
