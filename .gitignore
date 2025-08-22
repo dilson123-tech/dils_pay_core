@@ -1,26 +1,32 @@
-# Python / venv
-venv/
-**/__pycache__/
-*.pyc
-*.pyo
+# deps
+**/node_modules/
 
-# Env / segredos
-.env
-*.env
-.env.*
+# builds
+**/dist/
+**/build/
+**/.cache/
 
-# DB e artefatos locais
-*.db
-dev.db
-
-# Editor / SO
-.vscode/
-.idea/
-.DS_Store
-
-# Frontend (se usar build)
-node_modules/
-dist/
-
-# Outros arquivos locais
+# logs
 *.log
+npm-debug.log*
+yarn-*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# env
+.env
+.env.*
+coverage/
+
+# Python/Node artifacts
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.mypy_cache/
+.pytest_cache/
+node_modules/
+frontend/node_modules/

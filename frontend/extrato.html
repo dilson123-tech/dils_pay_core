@@ -1,77 +1,174 @@
 <!DOCTYPE html>
 <html lang="pt-BR">
-<head>
-  <meta charset="UTF-8" />
-  <title>Extrato Financeiro — v1</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="./style.css">
-</head>
-<body>
-  <div class="container">
-    <div class="title">
-      <span class="pill">Extrato • v1</span>
-      <h1>SaaS-like, rápido e sem build</h1>
-    </div>
+  <head>
+    <meta charset="UTF-8" >
+    <title>Extrato Financeiro — v1</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" >
+    <meta name="theme-color" content="#0ea5e9" >
+    <link rel="manifest" href="manifest.webmanifest" >
+    <link rel="stylesheet" href="./style.css" >
 
-    <div class="card" id="app">
-      <!-- Config -->
-      <div class="config">
-        <div>
-          <label>BASE_URL</label>
-          <input id="baseUrl" placeholder="ex.: http://127.0.0.1:8000" />
-        </div>
-        <div>
-          <label>Token (Bearer)</label>
-          <input id="token" placeholder="Cole o token aqui" />
-        </div>
-        <div>
-          <label>Ledger ID</label>
-          <input id="ledgerId" type="number" min="1" value="1" />
-        </div>
-        <div class="actions">
-          <button id="saveCfg">Salvar Config</button>
-          <button class="ghost" id="clearCfg" title="Limpar config">Limpar</button>
-        </div>
+    <style>
+      .token-row {
+        grid-column: 1 / -1 !important;
+        width: 100%;
+        display: block;
+      }
+      #token {
+        width: 100% !important;
+        min-height: 96px;
+        resize: vertical;
+        box-sizing: border-box;
+      }
+      label[for="token"] {
+        display: block;
+        margin: 8px 0 4px;
+      }
+      .dev-only {
+        display: none !important;
+      }
+      [data-env="dev"] .dev-only {
+        display: block !important;
+      }
+    </style>
+
+    <script>
+      // Define APP_ENV = dev em localhost/127.0.0.1; caso contrário, prod
+      (function () {
+        const stored = localStorage.getItem("APP_ENV");
+        const def =
+          location.hostname === "localhost" || location.hostname === "127.0.0.1" ? "dev" : "prod";
+        const env = stored || def;
+        document.documentElement.setAttribute("data-env", env);
+        window.APP_ENV = env;
+      })();
+    </script>
+  </head>
+
+  <body>
+    <div class="container">
+      <div class="title">
+        <span class="pill">Extrato • v1</span>
+        <h1>SaaS-like, rápido e sem build</h1>
+        <button id="testConn" type="button">Testar conexão</button>
       </div>
 
-      <!-- Filtros -->
-      <div class="controls">
-        <div class="row">
-          <div><label>Data inicial</label><input type="date" id="dataIni" /></div>
-          <div><label>Data final</label><input type="date" id="dataFim" /></div>
+      <!-- Banner (mensagens de sucesso/erro) -->
+      <div id="banner" class="banner" style="display: none"></div>
 
+      <div class="card" id="app">
+        <!-- Config -->
+        <div class="config">
           <div>
-            <label>Tipo</label>
-            <select id="tipo">
-              <option value="">Todos</option>
-              <option value="CREDITO">Crédito</option>
-              <option value="DEBITO">Débito</option>
-            </select>
+            <label for="BASE_URL">BASE_URL</label>
+            <input
+              id="BASE_URL"
+              type="text"
+              value="http://192.168.1.14:8000"
+              placeholder="http://192.168.1.14:8000"
+            >
+
+            <label for="token">Token (JWT) <small id="tokenTTL" class="muted ml6"></small></label>
+            <textarea
+              id="token"
+              rows="4"
+              autocomplete="off"
+              autocapitalize="off"
+              autocorrect="off"
+              spellcheck="false"
+              placeholder="Cole aqui seu JWT (ou clique Entrar/Token DEV)"
+            ></textarea>
+
+            <button
+              id="btnRefresh"
+              class="ghost"
+              type="button"
+              title="Gerar novo access via refresh"
+            >
+              Renovar token
+            </button>
+
+            <!-- Login -->
+            <div class="login-box">
+              <input
+                id="loginUser"
+                type="text"
+                placeholder="usuario ou email"
+                class="pad6 minw200"
+              >
+              <input id="loginPass" type="password" placeholder="senha" class="pad6 minw160" >
+              <button id="btnLogin" type="button">Entrar</button>
+              <button id="btnLogout" type="button" class="ghost">Sair</button>
+              <button id="btnLoginDev" class="dev-only" type="button" title="Só DEV">
+                Token DEV
+              </button>
+            </div>
           </div>
 
           <div>
-            <label>Itens por página</label>
-            <select id="pageSize">
-              <option>5</option>
-              <option selected>10</option>
-              <option>20</option>
-              <option>50</option>
-            </select>
+            <label for="ledgerSelect">Ledger</label>
+            <select id="ledgerSelect"></select>
+            <small class="block muted">ou digite:</small>
+            <input id="ledgerId" type="number" min="1" value="1" >
+          </div>
+
+          <div class="actions">
+            <button id="saveCfg" type="button">Salvar Config</button>
+            <button class="ghost" id="clearCfg" type="button" title="Limpar config">Limpar</button>
+            <button
+              class="ghost"
+              id="reloadLedgers"
+              type="button"
+              title="Recarregar lista de ledgers"
+            >
+              Atualizar lista
+            </button>
           </div>
         </div>
 
-        <!-- Presets de data -->
-        <div class="chips" id="presetChips" style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
-          <button class="chip" id="presetHoje">Hoje</button>
-          <button class="chip" id="preset7">Últimos 7d</button>
-          <button class="chip" id="preset30">Últimos 30d</button>
-          <button class="chip ghost" id="presetMes">Este mês</button>
-          <button class="chip secondary" id="presetLimpar">Limpar datas</button>
-        </div>
+        <!-- Filtros -->
+        <div class="controls">
+          <div class="row">
+            <div><label for="dataIni">Data inicial</label><input type="date" id="dataIni" ></div>
+            <div><label for="dataFim">Data final</label><input type="date" id="dataFim" ></div>
 
-        <div class="filter-actions">
-          <button id="aplicar">Aplicar filtros</button>
-          <button class="secondary" id="limpar">Limpar</button>
+            <div>
+              <label for="tipo">Tipo</label>
+              <select id="tipo">
+                <option value="">Todos</option>
+                <option value="CREDITO">Crédito</option>
+                <option value="DEBITO">Débito</option>
+              </select>
+            </div>
+
+            <div>
+              <label for="pageSize">Itens por página</label>
+              <select id="pageSize">
+                <option>5</option>
+                <option selected>10</option>
+                <option>20</option>
+                <option>50</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Presets de data -->
+          <div class="chips" id="presetChips">
+            <button class="chip" id="presetHoje" type="button">Hoje</button>
+            <button class="chip" id="preset7" type="button">Últimos 7d</button>
+            <button class="chip" id="preset30" type="button">Últimos 30d</button>
+            <button class="chip ghost" id="presetMes" type="button">Este mês</button>
+          </div>
+
+          <div class="filter-actions">
+            <button id="aplicar" type="button">Aplicar filtros</button>
+            <div class="export-actions">
+              <button id="btnCsvPagina" type="button">Baixar CSV</button>
+              <button id="btnCsvTudo" type="button">Baixar CSV (Tudo)</button>
+            </div>
+          </div>
+
+          <button class="secondary" id="limpar" type="button">Limpar</button>
           <div class="badges" id="statusBadges"></div>
         </div>
       </div>
@@ -95,11 +192,11 @@
       <!-- Rodapé -->
       <div class="footer">
         <div class="btns">
-          <button class="secondary" id="prev">&larr; Anterior</button>
+          <button class="secondary" id="prev" type="button">&larr; Anterior</button>
           <span class="pill" id="pageInfo">Pág. 1 de 1</span>
-          <button class="secondary" id="next">Próxima &rarr;</button>
-          <button id="baixarCSV">Baixar CSV</button>
-          <button id="baixarCSVAll" class="secondary">Baixar CSV (Tudo)</button>
+          <button class="secondary" id="next" type="button">Próxima &rarr;</button>
+          <button id="baixarCSV" type="button">Baixar CSV</button>
+          <button id="baixarCSVAll" type="button" class="secondary">Baixar CSV (Tudo)</button>
         </div>
 
         <div class="totals">
@@ -110,13 +207,24 @@
       </div>
 
       <div class="hint">
-        Dica: se o backend não mandar <code>X-Total-*</code>, os totalizadores somam apenas a <b>página atual</b>.
+        Dica: se o backend não mandar <code>X-Total-*</code>, os totalizadores somam apenas a
+        <b>página atual</b>.
       </div>
-    </div><!-- card -->
-  </div><!-- container -->
+    </div>
+    <!-- /card -->
+    <!-- /container -->
 
-  <script src="./app.js"></script>
-  <!-- força pegar a versão nova do JS -->
-  <script src="extrato.js?v=5"></script>
-</body>
+    <!-- scripts -->
+    <script type="module">
+      import { normalizeRow as _nr } from "./src/normalizeRow.js";
+      window.normalizeRow = _nr;
+    </script>
+    <script type="module" src="./src/schemas.js"></script>
+    <script src="./extrato.js?v=65" defer></script>
+    <script>
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.register("./sw.js");
+      }
+    </script>
+  </body>
 </html>
